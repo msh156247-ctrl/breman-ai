@@ -1,0 +1,30 @@
+version: "0.1"
+
+capabilities:
+  - id: api_design
+    category: backend
+    description: REST/GraphQL API 설계 능력
+  - id: fastapi
+    category: backend
+    description: FastAPI 구현 능력
+  - id: database_modeling
+    category: backend
+    description: 데이터 모델/스키마 설계 능력
+  - id: frontend_nextjs
+    category: frontend
+    description: Next.js UI 구현 능력
+  - id: ui_system
+    category: frontend
+    description: 컴포넌트/디자인 시스템 구성 능력
+  - id: qa_test_design
+    category: qa
+    description: 테스트 전략/케이스 설계 능력
+  - id: regression_testing
+    category: qa
+    description: 회귀 테스트 자동화 능력
+  - id: security_review
+    category: governance
+    description: 보안/권한 정책 리뷰 능력
+  - id: policy_enforcement
+    category: governance
+    description: 정책 위반 탐지 및 차단 능력

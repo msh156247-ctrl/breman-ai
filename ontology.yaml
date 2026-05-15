@@ -1,0 +1,100 @@
+version: "0.1"
+domain: "webapp"
+
+objects:
+  - Mission
+  - Task
+  - Artifact
+  - Approval
+  - Policy
+
+actions:
+  - Plan
+  - Implement
+  - Validate
+  - Approve
+  - Escalate
+
+roles:
+  architect:
+    can_read: [requirements, policy]
+    can_execute: [Plan]
+    can_write: [architecture, tech_stack, api_design]
+    needs_approval: []
+  backend:
+    can_read: [architecture, api_design]
+    can_execute: [Implement]
+    can_write: [api_endpoints, db_models, auth_system]
+    needs_approval: [schema_change]
+  frontend:
+    can_read: [architecture, api_endpoints]
+    can_execute: [Implement]
+    can_write: [pages_structure, components, api_integration]
+    needs_approval: []
+  qa:
+    can_read: [api_endpoints, pages_structure]
+    can_execute: [Validate]
+    can_write: [test_scenarios, coverage_target, verdict]
+    needs_approval: [production_block]
+
+workflows:
+  webapp_default:
+    entry_role: architect
+    steps:
+      - id: t1_arch
+        role: architect
+        description: 시스템 아키텍처 설계 및 기술 스택 결정
+        dependencies: []
+      - id: t2_backend
+        role: backend
+        description: FastAPI 백엔드 API 및 인증 시스템 구현
+        dependencies: [t1_arch]
+      - id: t3_frontend
+        role: frontend
+        description: Next.js 프론트엔드 UI 및 API 연동 구현
+        dependencies: [t1_arch]
+      - id: t4_qa
+        role: qa
+        description: 통합 테스트 시나리오 및 QA 계획 수립
+        dependencies: [t2_backend, t3_frontend]
+  api_only:
+    entry_role: architect
+    steps:
+      - id: t1_arch
+        role: architect
+        description: API 중심 아키텍처 설계
+        dependencies: []
+      - id: t2_backend
+        role: backend
+        description: FastAPI 백엔드 API 및 인증 시스템 구현
+        dependencies: [t1_arch]
+      - id: t3_qa
+        role: qa
+        description: API 테스트 시나리오 및 검증 계획 수립
+        dependencies: [t2_backend]
+  qa_only:
+    entry_role: qa
+    steps:
+      - id: t1_qa_plan
+        role: qa
+        description: 테스트 전략 수립 및 범위 정의
+        dependencies: []
+      - id: t2_qa_cases
+        role: qa
+        description: 회귀/통합 테스트 케이스 작성
+        dependencies: [t1_qa_plan]
+
+routing_rules:
+  - workflow: qa_only
+    priority: 100
+    include_any: [qa, test, 테스트, 검증, quality]
+    exclude_any: [backend, api, fastapi, 백엔드, frontend, next.js, 프론트, 화면]
+    include_regex: ["(회귀|통합)\\s*테스트", "qa\\s*전략"]
+  - workflow: api_only
+    priority: 80
+    include_any: [backend, api, fastapi, 백엔드]
+    exclude_any: [frontend, next.js, 프론트, 화면, user interface]
+    include_regex: ["(fastapi|backend).*(api|인증)", "api\\s*서버"]
+  - workflow: webapp_default
+    priority: 0
+    default: true

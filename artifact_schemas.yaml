@@ -1,0 +1,44 @@
+version: "0.1"
+
+schemas:
+  architect:
+    required_keys:
+      - architecture
+      - tech_stack
+      - api_design
+    key_types:
+      architecture: string
+      tech_stack: string
+      api_design: string
+
+  backend:
+    required_keys:
+      - api_endpoints
+      - db_models
+      - auth_system
+    key_types:
+      api_endpoints: string
+      db_models: string
+      auth_system: string
+
+  frontend:
+    required_keys:
+      - pages_structure
+      - components
+      - api_integration
+    key_types:
+      pages_structure: string
+      components: string
+      api_integration: string
+
+  qa:
+    required_keys:
+      - test_scenarios
+      - unit_tests
+      - integration_tests
+      - coverage_target
+    key_types:
+      test_scenarios: string
+      unit_tests: string
+      integration_tests: string
+      coverage_target: string
