@@ -2,8 +2,9 @@
 
 ## `No FastAPI entrypoint found`
 
-- **권장:** Vercel 프로젝트 **Root Directory = `frontend`** → Next만 올리면 이 메시지와 무관합니다.
-- 루트로 올릴 때: **`pyproject.toml`** (`api.server:app`) + 루트 **`server.py`** / **`api/main.py`** 진입 심.
+- **거의 항상:** **Framework Preset이 FastAPI(또는 Other)** 로 잡혀 있는데 실제 코드는 **`frontend`의 Next.js** 인 경우입니다. **Settings → Build and Deployment → Framework Preset → `Next.js`** 로 바꾼 뒤 재배포하세요.
+- **Root Directory = `frontend`** 권장. 이때 Python `api/` 는 배포 루트에 없으므로, 위 메시지는 프레임워크 오인 시 가장 흔합니다.
+- 저장소 **루트**를 배포 루트로 둘 때는 루트 **`vercel.json`** 이 `cd frontend && npm run build` 를 수행합니다. (엔트리포인트 보강용으로 루트에 **`pyproject.toml`**, **`server.py`**, **`api/main.py`** 가 있을 수 있습니다.)
 
 ## 500 `FUNCTION_INVOCATION_FAILED` 가 날 때
 

@@ -31,7 +31,14 @@ npm run dev
 
 이 저장소 루트에는 Python용 `api/` 디렉터리가 있습니다. Vercel은 루트에 `api/`가 있으면 **Serverless Functions 경로**로 오인할 수 있어, **빌드/런타임 500**이 날 수 있습니다.
 
-**반드시 Vercel 프로젝트 → Settings → General → Root Directory 를 `frontend` 로 지정**한 뒤 다시 배포하세요. (또는 **Build and Deployment** 에서 동일 항목)
+**반드시 Vercel에서:**
+
+1. **Settings → Build and Deployment → Framework Preset → `Next.js`** (다른 값이면 `No FastAPI entrypoint` 가 반복될 수 있음)
+2. **Root Directory → `frontend`** (저장소 루트로 두면 루트의 `vercel.json`이 `cd frontend && build` 로 맞춤)
+
+이 저장소에는 **`frontend/vercel.json`**(`framework: nextjs`)이 있어, Vercel이 **FastAPI 프로젝트로 오인하지 않도록** 돕습니다.
+
+다시 배포하세요.
 
 `No FastAPI entrypoint found` 가 보이면 Vercel이 **저장소 루트를 Python 프로젝트로 빌드** 중인 것입니다. Root Directory 를 `frontend` 로 바꾸면 해결되는 경우가 대부분입니다. 루트 배포 시 **`pyproject.toml`** (`api.server:app`)과 저장소 루트 **`server.py`** / **`api/main.py`**(Vercel 기본 스캔 경로) 를 사용합니다.
 
