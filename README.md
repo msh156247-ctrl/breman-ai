@@ -33,7 +33,7 @@ npm run dev
 
 **반드시 Vercel 프로젝트 → Settings → General → Root Directory 를 `frontend` 로 지정**한 뒤 다시 배포하세요. (또는 **Build and Deployment** 에서 동일 항목)
 
-`No FastAPI entrypoint found` 가 보이면 Vercel이 **저장소 루트를 Python 프로젝트로 빌드** 중인 것입니다. Root Directory 를 `frontend` 로 바꾸면 해결되는 경우가 대부분입니다. 루트 배포 시 **`pyproject.toml`** 의 `[tool.vercel] entrypoint` 는 **`api.server:app`** 처럼 `모듈:FastAPI인스턴스` 형식이어야 합니다.
+`No FastAPI entrypoint found` 가 보이면 Vercel이 **저장소 루트를 Python 프로젝트로 빌드** 중인 것입니다. Root Directory 를 `frontend` 로 바꾸면 해결되는 경우가 대부분입니다. 루트 배포 시 **`pyproject.toml`** (`api.server:app`)과 저장소 루트 **`server.py`** / **`api/main.py`**(Vercel 기본 스캔 경로) 를 사용합니다.
 
 - **Install Command**: 비워 두거나 `npm install` (Root가 `frontend`일 때)
 - **Build Command**: 비워 두거나 `npm run build`

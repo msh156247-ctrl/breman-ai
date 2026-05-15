@@ -1,5 +1,4 @@
-# Vercel: entrypoint 는 "파일경로"가 아니라 module:callable (예: api.server:app).
-# ⚠️ 운영은 Root Directory = `frontend` 로 Next만 배포, API는 별도 호스트 권장.
+# Vercel: module:callable (pyproject) + 루트 server.py / api/main.py 심으로 자동 탐색 대비.
 
 [tool.vercel]
 entrypoint = "api.server:app"
