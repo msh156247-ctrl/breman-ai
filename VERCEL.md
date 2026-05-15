@@ -3,7 +3,7 @@
 ## `No FastAPI entrypoint found`
 
 - **권장:** Vercel 프로젝트 **Root Directory = `frontend`** → Next만 올리면 이 메시지와 무관합니다.
-- 루트로 올릴 때: 루트 **`pyproject.toml`** 의 `[tool.vercel] entrypoint` 를 사용합니다. FastAPI 전체 기능은 별도 호스트에서 실행하는 편이 안전합니다.
+- 루트로 올릴 때: **`pyproject.toml`** 에 `entrypoint = "api.server:app"` (`모듈:FastAPI app` 형식).
 
 ## 500 `FUNCTION_INVOCATION_FAILED` 가 날 때
 
