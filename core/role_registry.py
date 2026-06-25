@@ -18,15 +18,21 @@ class RoleProfile:
 class RoleRegistry:
     def __init__(self, ontology: Ontology):
         self._profiles: Dict[str, RoleProfile] = {}
+
+        def string_list(value: Any) -> List[str]:
+            if not isinstance(value, list):
+                return []
+            return [str(item).strip() for item in value if str(item).strip()]
+
         for role_name, role_raw in ontology.roles.items():
             if not isinstance(role_raw, dict):
                 continue
             self._profiles[role_name] = RoleProfile(
                 name=role_name,
-                can_read=list(role_raw.get("can_read", [])),
-                can_execute=list(role_raw.get("can_execute", [])),
-                can_write=list(role_raw.get("can_write", [])),
-                needs_approval=list(role_raw.get("needs_approval", [])),
+                can_read=string_list(role_raw.get("can_read")),
+                can_execute=string_list(role_raw.get("can_execute")),
+                can_write=string_list(role_raw.get("can_write")),
+                needs_approval=string_list(role_raw.get("needs_approval")),
             )
 
     def get(self, role_name: str) -> RoleProfile | None:

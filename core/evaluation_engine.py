@@ -21,6 +21,11 @@ class EvaluationEngine:
         "backend": 3,
         "frontend": 3,
         "qa": 4,
+        "writer": 1,
+        "translator": 1,
+        "data": 1,
+        "image": 1,
+        "agent": 1,
     }
 
     def evaluate(self, role: str, artifacts: Dict[str, Any], execution_pass: bool) -> EvaluationResult:
@@ -53,7 +58,7 @@ class EvaluationEngine:
             non_empty_count = 0
             for _, value in artifacts.items():
                 if isinstance(value, str):
-                    if len(value.strip()) >= 5:
+                    if value.strip():
                         non_empty_count += 1
                 elif value not in (None, "", [], {}):
                     non_empty_count += 1

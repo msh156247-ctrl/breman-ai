@@ -4,13 +4,28 @@ from typing import Any, Dict, List
 
 from .models import Task, TaskStatus
 
+SUCCESS_STATUSES = {TaskStatus.COMPLETED, TaskStatus.SKIPPED}
+
 
 class TaskGraphEngine:
     """DAG 기반 태스크 실행 엔진."""
 
     def __init__(self, tasks: Dict[str, Task]):
         self.tasks = tasks
+        self._validate_dependencies()
         self._validate_no_cycles()
+
+    def _validate_dependencies(self) -> None:
+        missing = sorted(
+            {
+                dep_id
+                for task in self.tasks.values()
+                for dep_id in task.dependencies
+                if dep_id not in self.tasks
+            }
+        )
+        if missing:
+            raise ValueError(f"존재하지 않는 의존성: {', '.join(missing)}")
 
     def _validate_no_cycles(self) -> None:
         visited, rec_stack = set(), set()
@@ -47,7 +62,7 @@ class TaskGraphEngine:
     def _dependencies_satisfied(self, task: Task) -> bool:
         for dep_id in task.dependencies:
             dep_task = self.tasks.get(dep_id)
-            if not dep_task or dep_task.status != TaskStatus.COMPLETED:
+            if not dep_task or dep_task.status not in SUCCESS_STATUSES:
                 return False
         return True
 
@@ -60,7 +75,7 @@ class TaskGraphEngine:
         return artifacts
 
     def is_completed(self) -> bool:
-        return all(t.status == TaskStatus.COMPLETED for t in self.tasks.values())
+        return all(t.status in SUCCESS_STATUSES for t in self.tasks.values())
 
     def is_failed(self) -> bool:
         return any(t.status == TaskStatus.FAILED for t in self.tasks.values())
@@ -68,5 +83,5 @@ class TaskGraphEngine:
     def progress(self) -> float:
         if not self.tasks:
             return 0.0
-        completed = sum(1 for t in self.tasks.values() if t.status == TaskStatus.COMPLETED)
+        completed = sum(1 for t in self.tasks.values() if t.status in SUCCESS_STATUSES)
         return completed / len(self.tasks)

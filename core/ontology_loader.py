@@ -13,11 +13,18 @@ class Ontology:
 
     @property
     def roles(self) -> Dict[str, Dict[str, Any]]:
-        return self.raw.get("roles", {})
+        roles = self.raw.get("roles", {})
+        return roles if isinstance(roles, dict) else {}
 
     @property
     def workflows(self) -> Dict[str, Dict[str, Any]]:
-        return self.raw.get("workflows", {})
+        workflows = self.raw.get("workflows", {})
+        return workflows if isinstance(workflows, dict) else {}
+
+    @property
+    def units(self) -> Dict[str, Dict[str, Any]]:
+        units = self.raw.get("units", {})
+        return units if isinstance(units, dict) else {}
 
 
 def load_ontology(path: str | Path) -> Ontology:

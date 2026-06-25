@@ -23,6 +23,13 @@ class WorkflowCompiler:
         self.roles = role_registry
 
     @staticmethod
+    def _priority(value: Any) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
     def _contains_any(text: str, keywords: List[str]) -> bool:
         return any(keyword.lower() in text for keyword in keywords)
 
@@ -52,7 +59,7 @@ class WorkflowCompiler:
         default_workflow = "webapp_default"
         sorted_rules = sorted(
             [rule for rule in rules if isinstance(rule, dict)],
-            key=lambda r: int(r.get("priority", 0)),
+            key=lambda r: self._priority(r.get("priority", 0)),
             reverse=True,
         )
 
@@ -89,7 +96,7 @@ class WorkflowCompiler:
             summary = {
                 "rule_index": idx,
                 "workflow": workflow,
-                "priority": int(rule.get("priority", 0)),
+                "priority": self._priority(rule.get("priority", 0)),
                 "include_matched": include,
                 "exclude_matched": exclude,
                 "include_any": [str(v) for v in include_any],
@@ -134,9 +141,14 @@ class WorkflowCompiler:
             task_id = str(step.get("id", "")).strip()
             role = str(step.get("role", "")).strip()
             desc = str(step.get("description", "")).strip()
-            dependencies = [str(dep) for dep in step.get("dependencies", [])]
+            raw_dependencies = step.get("dependencies", [])
+            if not isinstance(raw_dependencies, list):
+                raise ValueError(f"Workflow dependencies must be a list: {task_id or '<missing-id>'}")
+            dependencies = [str(dep).strip() for dep in raw_dependencies if str(dep).strip()]
             if not task_id or not role or not desc:
                 continue
+            if task_id in tasks:
+                raise ValueError(f"Duplicate workflow task id: {task_id}")
 
             # 역할 미정의 시 컴파일 실패로 막아 안전성 확보
             if self.roles.get(role) is None:
@@ -151,6 +163,16 @@ class WorkflowCompiler:
 
         if not tasks:
             raise ValueError("No tasks compiled from workflow")
+        missing_dependencies = sorted(
+            {
+                dependency
+                for task in tasks.values()
+                for dependency in task.dependencies
+                if dependency not in tasks
+            }
+        )
+        if missing_dependencies:
+            raise ValueError(f"Workflow has missing dependencies: {', '.join(missing_dependencies)}")
         return CompiledWorkflow(workflow_name=workflow_name, tasks=tasks)
 
     def compile_for_goal(self, goal: str) -> CompiledWorkflow:

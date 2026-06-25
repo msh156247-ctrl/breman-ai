@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Dict, Tuple
 
 from .models import Task
@@ -9,8 +10,14 @@ class CostGovernor:
     """비용/재시도 제한 관리."""
 
     def __init__(self, budget: float = 5.0, max_retries: int = 3):
-        self.budget = budget
-        self.max_retries = max_retries
+        normalized_budget = float(budget)
+        normalized_retries = int(max_retries)
+        if not math.isfinite(normalized_budget) or normalized_budget < 0:
+            raise ValueError(f"invalid_budget:{budget}")
+        if normalized_retries < 0:
+            raise ValueError(f"invalid_max_retries:{max_retries}")
+        self.budget = normalized_budget
+        self.max_retries = normalized_retries
         self.spent = 0.0
         self.retry_counts: Dict[str, int] = {}
 
@@ -23,15 +30,19 @@ class CostGovernor:
         return True, "OK"
 
     def record_cost(self, task_id: str, cost: float) -> None:
-        self.spent += cost
+        normalized = float(cost)
+        if not math.isfinite(normalized) or normalized < 0:
+            raise ValueError(f"invalid_task_cost:{task_id}:{cost}")
+        self.spent += normalized
 
     def record_retry(self, task_id: str) -> None:
         self.retry_counts[task_id] = self.retry_counts.get(task_id, 0) + 1
 
     def status(self) -> Dict[str, float]:
+        usage_percent = round((self.spent / self.budget) * 100, 1) if self.budget > 0 else 100.0
         return {
             "spent": round(self.spent, 4),
             "budget": self.budget,
-            "remaining": round(self.budget - self.spent, 4),
-            "usage_percent": round((self.spent / self.budget) * 100, 1),
+            "remaining": round(max(0.0, self.budget - self.spent), 4),
+            "usage_percent": usage_percent,
         }

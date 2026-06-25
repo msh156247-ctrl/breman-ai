@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 import uuid
@@ -10,6 +10,8 @@ import uuid
 class TaskStatus(Enum):
     PENDING = "pending"
     RUNNING = "running"
+    WAITING_INPUT = "waiting_input"
+    SKIPPED = "skipped"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -17,6 +19,7 @@ class TaskStatus(Enum):
 class MissionStatus(Enum):
     PLANNING = "planning"
     RUNNING = "running"
+    AWAITING_APPROVAL = "awaiting_approval"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -33,7 +36,8 @@ class Task:
     cost: float = 0.0
     confidence: float = 0.0
     error_message: Optional[str] = None
-    created_at: datetime = field(default_factory=datetime.now)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -46,6 +50,8 @@ class Task:
             "confidence": self.confidence,
             "cost": self.cost,
             "retry_count": self.retry_count,
+            "error_message": self.error_message,
+            "metadata": self.metadata,
         }
 
 
@@ -57,7 +63,7 @@ class Mission:
     tasks: Dict[str, Task] = field(default_factory=dict)
     total_cost: float = 0.0
     budget: float = 5.0
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_dict(self) -> Dict[str, Any]:
         return {

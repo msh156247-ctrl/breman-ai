@@ -41,6 +41,8 @@ class ValidationEngine:
             return ValidationResult(False, [f"schema_not_found_for_role:{role}"])
         if not isinstance(artifacts, dict):
             return ValidationResult(False, ["artifacts_not_object"])
+        if bool(schema.get("allow_any_object")):
+            return ValidationResult(bool(artifacts), [] if artifacts else ["artifacts_empty"])
 
         reasons: List[str] = []
         required_keys = schema.get("required_keys", [])
@@ -58,7 +60,9 @@ class ValidationEngine:
             expected_type = self.TYPE_MAP.get(str(expected_name))
             if expected_type is None:
                 continue
-            if not isinstance(artifacts[key], expected_type):
+            value = artifacts[key]
+            is_boolean_number = isinstance(value, bool) and str(expected_name) in {"number", "integer"}
+            if is_boolean_number or not isinstance(value, expected_type):
                 reasons.append(f"type_mismatch:{key}:{expected_name}")
 
         return ValidationResult(passed=(len(reasons) == 0), reasons=reasons)

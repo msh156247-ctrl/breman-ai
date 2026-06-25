@@ -34,7 +34,12 @@ class PolicyEngine:
         self.rules = selected
         self.version = str(raw.get("version", "unknown"))
 
-    def check_mission_start(self, budget: float, use_mock: bool) -> PolicyCheckResult:
+    def check_mission_start(
+        self,
+        budget: float,
+        use_mock: bool,
+        api_key_available: bool | None = None,
+    ) -> PolicyCheckResult:
         reasons: List[str] = []
         warnings: List[str] = []
 
@@ -43,7 +48,8 @@ class PolicyEngine:
             reasons.append(f"budget_exceeds_policy:{budget}>{max_budget}")
 
         require_key = bool(self.rules.get("require_api_key_when_real_mode", True))
-        if require_key and (not use_mock) and (not os.getenv("OPENAI_API_KEY")):
+        has_api_key = bool(os.getenv("OPENAI_API_KEY")) if api_key_available is None else api_key_available
+        if require_key and (not use_mock) and (not has_api_key):
             reasons.append("real_mode_without_openai_api_key")
 
         return PolicyCheckResult(
@@ -54,6 +60,7 @@ class PolicyEngine:
                 "budget": budget,
                 "max_budget_per_mission": max_budget,
                 "use_mock": use_mock,
+                "api_key_available": has_api_key,
                 "policy_set": self.policy_set_name,
             },
         )

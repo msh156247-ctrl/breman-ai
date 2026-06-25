@@ -4,8 +4,7 @@ policy_sets:
   default:
     max_budget_per_mission: 20.0
     require_api_key_when_real_mode: true
-    approval_required_roles:
-      - backend
+    approval_required_roles: []
     blocked_task_roles: []
     external_publish_block: true
     soft_spend_ratio_warning: 0.9

@@ -1,18 +1,38 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
+import base64
+import hashlib
+import hmac
 import json
+import os
 from pathlib import Path
-import shutil
+import secrets
+import sqlite3
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from sqlalchemy import Float, Index, Integer, String, Text, create_engine, desc, text
+from sqlalchemy import Float, Index, Integer, String, Text, create_engine, desc, event, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 
+KEY_ENCRYPTION_SECRET_ENV = "BREMEN_KEY_ENCRYPTION_SECRET"
+LEGACY_JWT_SECRET_ENV = "BREMEN_JWT_SECRET"
+DEFAULT_DEV_KEY_ENCRYPTION_SECRET = "bremen-dev-key-encryption-secret-change-me"
+ENCRYPTED_KEY_PREFIX = "enc:v1:"
+
+
 def _default_db_url() -> str:
-    db_path = Path(__file__).resolve().parents[1] / "runtime" / "bremen.db"
+    configured_path = os.getenv("BREMEN_DB_PATH", "").strip()
+    configured_runtime_dir = os.getenv("BREMEN_RUNTIME_DIR", "").strip()
+    if configured_path:
+        db_path = Path(configured_path).expanduser()
+    elif configured_runtime_dir:
+        db_path = Path(configured_runtime_dir).expanduser() / "bremen.db"
+    else:
+        db_path = Path(__file__).resolve().parents[1] / "runtime" / "bremen.db"
+    if not db_path.is_absolute():
+        db_path = (Path(__file__).resolve().parents[1] / db_path).resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     return f"sqlite:///{db_path.as_posix()}"
 
@@ -24,7 +44,18 @@ def get_db_file_path() -> str:
 
 
 DB_URL = _default_db_url()
-ENGINE = create_engine(DB_URL, connect_args={"check_same_thread": False})
+ENGINE = create_engine(DB_URL, connect_args={"check_same_thread": False, "timeout": 30})
+
+
+@event.listens_for(ENGINE, "connect")
+def _configure_sqlite_connection(dbapi_connection: Any, _connection_record: Any) -> None:
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()
 SessionLocal = sessionmaker(bind=ENGINE, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
@@ -60,54 +91,7 @@ class KeyHistory(Base):
     masked: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
 
-# Phase-1 schema placeholders for core runtime entities.
-class MemberEntity(Base):
-    __tablename__ = "members"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    provider: Mapped[str] = mapped_column(String(64), nullable=False)
-    model: Mapped[str] = mapped_column(String(128), nullable=False)
-    version: Mapped[str] = mapped_column(String(128), nullable=False)
-
-
-class TeamEntity(Base):
-    __tablename__ = "teams"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    domain: Mapped[str] = mapped_column(String(128), nullable=False)
-
-
-class ChannelEntity(Base):
-    __tablename__ = "channels"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    source_team_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    target_team_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    topic: Mapped[str] = mapped_column(String(255), nullable=False)
-
-
-class ContractEntity(Base):
-    __tablename__ = "contracts"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    source_team_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    target_team_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    version: Mapped[int] = mapped_column(Integer, nullable=False)
-    active: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-
-
-class LedgerEntity(Base):
-    __tablename__ = "ledger"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    kind: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_at: Mapped[float] = mapped_column(Float, nullable=False)
-    total_cost: Mapped[float] = mapped_column(Float, nullable=False)
-
-
-# Stage-2 persistent stores (JSON payload based, migration-safe).
+# Persistent stores use JSON payloads so fields can evolve without destructive migrations.
 class MemberStore(Base):
     __tablename__ = "member_store"
 
@@ -172,9 +156,55 @@ class MissionOwnerStore(Base):
     created_at: Mapped[float] = mapped_column(Float, nullable=False)
 
 
+class MissionStore(Base):
+    __tablename__ = "mission_store"
+    __table_args__ = (
+        Index("ix_mission_store_owner_id", "owner_id"),
+        Index("ix_mission_store_status", "status"),
+        Index("ix_mission_store_created_at", "created_at"),
+    )
+
+    mission_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[float] = mapped_column(Float, nullable=False)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class WorkspaceSettingsStore(Base):
+    __tablename__ = "workspace_settings_store"
+
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    updated_at: Mapped[float] = mapped_column(Float, nullable=False)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class MemoryStore(Base):
+    __tablename__ = "memory_store"
+    __table_args__ = (
+        Index("ix_memory_store_scope_bucket", "scope", "scope_id"),
+        Index("ix_memory_store_updated_at", "updated_at"),
+    )
+
+    scope: Mapped[str] = mapped_column(String(32), primary_key=True)
+    scope_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    classification: Mapped[str] = mapped_column(String(32), nullable=False)
+    updated_at: Mapped[float] = mapped_column(Float, nullable=False)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 def init_db() -> None:
     Base.metadata.create_all(bind=ENGINE)
     _apply_sqlite_migrations()
+
+
+def check_database_health() -> bool:
+    try:
+        with _session_scope() as session:
+            return int(session.execute(text("SELECT 1")).scalar_one()) == 1
+    except Exception:
+        return False
 
 
 def _apply_sqlite_migrations() -> None:
@@ -186,6 +216,11 @@ def _apply_sqlite_migrations() -> None:
         _ensure_column(session, "ledger_store", "royalty_cost", "REAL")
         _ensure_column(session, "ledger_store", "platform_fee", "REAL")
         _ensure_column(session, "ledger_store", "total_cost", "REAL")
+        session.execute(text("CREATE INDEX IF NOT EXISTS ix_ledger_store_created_at ON ledger_store(created_at)"))
+        session.execute(text("CREATE INDEX IF NOT EXISTS ix_ledger_store_receiver_team ON ledger_store(receiver_team_id)"))
+        session.execute(text("CREATE INDEX IF NOT EXISTS ix_mission_store_owner_id ON mission_store(owner_id)"))
+        session.execute(text("CREATE INDEX IF NOT EXISTS ix_mission_store_status ON mission_store(status)"))
+        session.execute(text("CREATE INDEX IF NOT EXISTS ix_mission_store_created_at ON mission_store(created_at)"))
 
 
 def _ensure_column(session: Session, table_name: str, column_name: str, sql_type: str) -> None:
@@ -209,19 +244,30 @@ def _session_scope() -> Iterator[Session]:
 
 
 def is_provider_key_registered(provider: str) -> bool:
+    return bool(get_provider_key(provider))
+
+
+def get_provider_key(provider: str) -> str | None:
     with _session_scope() as session:
-        row = session.get(KeyRegistry, provider)
-        return bool(row and row.api_key.strip())
+        row = session.get(KeyRegistry, str(provider).strip().lower())
+        if not row or not row.api_key.strip():
+            return None
+        try:
+            value = decrypt_provider_key(row.api_key).strip()
+        except ValueError:
+            return None
+        return value or None
 
 
 def upsert_provider_key(provider: str, api_key: str, masked: str, updated_at: float) -> None:
+    stored_key = encrypt_provider_key(api_key)
     with _session_scope() as session:
         row = session.get(KeyRegistry, provider)
         if row is None:
-            row = KeyRegistry(provider=provider, api_key=api_key, masked=masked, updated_at=updated_at)
+            row = KeyRegistry(provider=provider, api_key=stored_key, masked=masked, updated_at=updated_at)
             session.add(row)
         else:
-            row.api_key = api_key
+            row.api_key = stored_key
             row.masked = masked
             row.updated_at = updated_at
 
@@ -242,13 +288,19 @@ def list_key_status(providers: Dict[str, str]) -> List[Dict[str, Any]]:
     result: List[Dict[str, Any]] = []
     for provider, env_name in providers.items():
         row = all_rows.get(provider)
+        registered = False
+        if row is not None:
+            try:
+                registered = bool(decrypt_provider_key(row.api_key).strip())
+            except ValueError:
+                registered = False
         result.append(
             {
                 "provider": provider,
                 "env_name": env_name,
-                "registered": row is not None,
-                "masked": row.masked if row else None,
-                "updated_at": row.updated_at if row else None,
+                "registered": registered,
+                "masked": row.masked if registered and row else None,
+                "updated_at": row.updated_at if registered and row else None,
             }
         )
     return result
@@ -257,7 +309,21 @@ def list_key_status(providers: Dict[str, str]) -> List[Dict[str, Any]]:
 def list_registered_keys() -> List[Dict[str, Any]]:
     with _session_scope() as session:
         rows = session.query(KeyRegistry).all()
-        return [{"provider": r.provider, "api_key": r.api_key, "masked": r.masked, "updated_at": r.updated_at} for r in rows]
+        result: List[Dict[str, Any]] = []
+        for row in rows:
+            try:
+                api_key = decrypt_provider_key(row.api_key)
+            except ValueError:
+                api_key = ""
+            result.append(
+                {
+                    "provider": row.provider,
+                    "api_key": api_key,
+                    "masked": row.masked,
+                    "updated_at": row.updated_at,
+                }
+            )
+        return result
 
 
 def append_key_history(
@@ -295,7 +361,7 @@ def list_key_history(
         if provider:
             query = query.filter(KeyHistory.provider == provider.strip().lower())
         if actor:
-            query = query.filter(KeyHistory.actor == actor.strip().lower())
+            query = query.filter(KeyHistory.actor == actor.strip())
         if action:
             query = query.filter(KeyHistory.action == action.strip().lower())
 
@@ -318,11 +384,67 @@ def list_key_history(
 
 
 def _dumps(payload: Dict[str, Any]) -> str:
-    return json.dumps(payload, ensure_ascii=False)
+    return json.dumps(payload, ensure_ascii=False, default=str)
 
 
 def _loads(payload: str) -> Dict[str, Any]:
-    return json.loads(payload)
+    try:
+        parsed = json.loads(payload)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _key_encryption_secret() -> bytes:
+    raw = (
+        os.getenv(KEY_ENCRYPTION_SECRET_ENV)
+        or os.getenv(LEGACY_JWT_SECRET_ENV)
+        or DEFAULT_DEV_KEY_ENCRYPTION_SECRET
+    )
+    return hashlib.sha256(raw.encode("utf-8")).digest()
+
+
+def _derive_key_stream(secret: bytes, nonce: bytes, size: int) -> bytes:
+    chunks: List[bytes] = []
+    counter = 0
+    while sum(len(chunk) for chunk in chunks) < size:
+        counter_bytes = counter.to_bytes(4, "big")
+        chunks.append(hmac.new(secret, nonce + counter_bytes, hashlib.sha256).digest())
+        counter += 1
+    return b"".join(chunks)[:size]
+
+
+def encrypt_provider_key(raw_key: str) -> str:
+    plaintext = raw_key.encode("utf-8")
+    nonce = secrets.token_bytes(16)
+    secret = _key_encryption_secret()
+    stream = _derive_key_stream(secret, nonce, len(plaintext))
+    ciphertext = bytes(a ^ b for a, b in zip(plaintext, stream))
+    tag = hmac.new(secret, nonce + ciphertext, hashlib.sha256).digest()
+    envelope = base64.urlsafe_b64encode(nonce + tag + ciphertext).decode("ascii")
+    return f"{ENCRYPTED_KEY_PREFIX}{envelope}"
+
+
+def decrypt_provider_key(stored_key: str) -> str:
+    if not stored_key.startswith(ENCRYPTED_KEY_PREFIX):
+        return stored_key
+    encoded = stored_key[len(ENCRYPTED_KEY_PREFIX) :]
+    try:
+        raw = base64.urlsafe_b64decode(encoded.encode("ascii"))
+    except Exception as exc:
+        raise ValueError("provider_key_invalid_envelope") from exc
+    if len(raw) < 48:
+        raise ValueError("provider_key_invalid_envelope")
+    nonce = raw[:16]
+    tag = raw[16:48]
+    ciphertext = raw[48:]
+    secret = _key_encryption_secret()
+    expected_tag = hmac.new(secret, nonce + ciphertext, hashlib.sha256).digest()
+    if not hmac.compare_digest(tag, expected_tag):
+        raise ValueError("provider_key_decryption_failed")
+    stream = _derive_key_stream(secret, nonce, len(ciphertext))
+    plaintext = bytes(a ^ b for a, b in zip(ciphertext, stream))
+    return plaintext.decode("utf-8")
 
 
 def create_member_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
@@ -336,13 +458,68 @@ def create_member_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
 def get_member_profile(member_id: str) -> Optional[Dict[str, Any]]:
     with _session_scope() as session:
         row = session.get(MemberStore, member_id)
-        return _loads(row.payload) if row else None
+        parsed = _loads(row.payload) if row else {}
+        return parsed or None
 
 
 def list_member_records() -> List[Dict[str, Any]]:
     with _session_scope() as session:
         rows = session.query(MemberStore).all()
-        return [_loads(r.payload) for r in rows]
+        return [parsed for row in rows if (parsed := _loads(row.payload))]
+
+
+def upsert_workspace_settings(user_id: str, settings: Dict[str, Any], updated_at: float) -> Dict[str, Any]:
+    payload = {**settings, "user_id": str(user_id), "updated_at": float(updated_at)}
+    with _session_scope() as session:
+        session.merge(
+            WorkspaceSettingsStore(
+                user_id=str(user_id),
+                updated_at=float(updated_at),
+                payload=_dumps(payload),
+            )
+        )
+    return payload
+
+
+def get_workspace_settings(user_id: str) -> Optional[Dict[str, Any]]:
+    with _session_scope() as session:
+        row = session.get(WorkspaceSettingsStore, str(user_id))
+        parsed = _loads(row.payload) if row else {}
+        return parsed or None
+
+
+def upsert_memory_record(record: Dict[str, Any], updated_at: float) -> Dict[str, Any]:
+    payload = {
+        "scope": str(record.get("scope") or ""),
+        "scope_id": str(record.get("scope_id") or ""),
+        "key": str(record.get("key") or ""),
+        "value": record.get("value"),
+        "classification": str(record.get("classification") or "internal"),
+        "updated_at": float(updated_at),
+    }
+    with _session_scope() as session:
+        session.merge(
+            MemoryStore(
+                scope=payload["scope"],
+                scope_id=payload["scope_id"],
+                key=payload["key"],
+                classification=payload["classification"],
+                updated_at=payload["updated_at"],
+                payload=_dumps(payload),
+            )
+        )
+    return payload
+
+
+def list_memory_records(scope: str, scope_id: str) -> List[Dict[str, Any]]:
+    with _session_scope() as session:
+        rows = (
+            session.query(MemoryStore)
+            .filter(MemoryStore.scope == str(scope), MemoryStore.scope_id == str(scope_id))
+            .order_by(MemoryStore.updated_at.asc(), MemoryStore.key.asc())
+            .all()
+        )
+        return [parsed for row in rows if (parsed := _loads(row.payload))]
 
 
 def create_team_record(team: Dict[str, Any]) -> Dict[str, Any]:
@@ -359,13 +536,14 @@ def update_team_record(team: Dict[str, Any]) -> Dict[str, Any]:
 def get_team_record(team_id: str) -> Optional[Dict[str, Any]]:
     with _session_scope() as session:
         row = session.get(TeamStore, team_id)
-        return _loads(row.payload) if row else None
+        parsed = _loads(row.payload) if row else {}
+        return parsed or None
 
 
 def list_team_records() -> List[Dict[str, Any]]:
     with _session_scope() as session:
         rows = session.query(TeamStore).all()
-        return [_loads(r.payload) for r in rows]
+        return [parsed for row in rows if (parsed := _loads(row.payload))]
 
 
 def create_channel_record(channel: Dict[str, Any]) -> Dict[str, Any]:
@@ -382,13 +560,14 @@ def update_channel_record(channel: Dict[str, Any]) -> Dict[str, Any]:
 def get_channel_record(channel_id: str) -> Optional[Dict[str, Any]]:
     with _session_scope() as session:
         row = session.get(ChannelStore, channel_id)
-        return _loads(row.payload) if row else None
+        parsed = _loads(row.payload) if row else {}
+        return parsed or None
 
 
 def list_channel_records() -> List[Dict[str, Any]]:
     with _session_scope() as session:
         rows = session.query(ChannelStore).all()
-        return [_loads(r.payload) for r in rows]
+        return [parsed for row in rows if (parsed := _loads(row.payload))]
 
 
 def create_contract_record(contract: Dict[str, Any]) -> Dict[str, Any]:
@@ -414,13 +593,14 @@ def update_contract_record(contract: Dict[str, Any]) -> Dict[str, Any]:
 def get_contract_record(contract_id: str) -> Optional[Dict[str, Any]]:
     with _session_scope() as session:
         row = session.get(ContractStore, contract_id)
-        return _loads(row.payload) if row else None
+        parsed = _loads(row.payload) if row else {}
+        return parsed or None
 
 
 def list_contract_records() -> List[Dict[str, Any]]:
     with _session_scope() as session:
         rows = session.query(ContractStore).all()
-        return [_loads(r.payload) for r in rows]
+        return [parsed for row in rows if (parsed := _loads(row.payload))]
 
 
 def list_contract_history_by_pair(pair_key: str) -> List[Dict[str, Any]]:
@@ -431,7 +611,7 @@ def list_contract_history_by_pair(pair_key: str) -> List[Dict[str, Any]]:
             .order_by(ContractStore.version.asc())
             .all()
         )
-        return [_loads(r.payload) for r in rows]
+        return [parsed for row in rows if (parsed := _loads(row.payload))]
 
 
 def get_active_contract_record(source_team_id: str, target_team_id: str) -> Optional[Dict[str, Any]]:
@@ -446,7 +626,8 @@ def get_active_contract_record(source_team_id: str, target_team_id: str) -> Opti
             .order_by(ContractStore.version.desc())
             .first()
         )
-        return _loads(row.payload) if row else None
+        parsed = _loads(row.payload) if row else {}
+        return parsed or None
 
 
 def deactivate_active_contracts(pair_key: str, exclude_contract_id: Optional[str] = None, deactivated_at: Optional[float] = None) -> None:
@@ -463,7 +644,9 @@ def deactivate_active_contracts(pair_key: str, exclude_contract_id: Optional[str
 
 
 def append_ledger_record(row: Dict[str, Any]) -> Dict[str, Any]:
-    receiver_team_id = str(row.get("team_id") or row.get("source_team_id") or "")
+    receiver_team_id = str(
+        row.get("receiver_team_id") or row.get("team_id") or row.get("source_team_id") or ""
+    )
     with _session_scope() as session:
         session.add(
             LedgerStore(
@@ -483,7 +666,7 @@ def append_ledger_record(row: Dict[str, Any]) -> Dict[str, Any]:
 def list_ledger_records() -> List[Dict[str, Any]]:
     with _session_scope() as session:
         rows = session.query(LedgerStore).order_by(LedgerStore.id.asc()).all()
-        return [_loads(r.payload) for r in rows]
+        return [parsed for row in rows if (parsed := _loads(row.payload))]
 
 
 def upsert_mission_owner(mission_id: str, owner_id: str, created_at: float) -> Dict[str, Any]:
@@ -508,6 +691,47 @@ def list_mission_owner_records() -> List[Dict[str, Any]]:
     with _session_scope() as session:
         rows = session.query(MissionOwnerStore).all()
         return [{"mission_id": r.mission_id, "owner_id": r.owner_id, "created_at": r.created_at} for r in rows]
+
+
+def _mission_created_at_epoch(mission: Dict[str, Any]) -> float:
+    raw = str(mission.get("created_at") or "").strip()
+    if raw:
+        try:
+            return datetime.fromisoformat(raw).timestamp()
+        except ValueError:
+            pass
+    return datetime.now(timezone.utc).timestamp()
+
+
+def upsert_mission_record(mission: Dict[str, Any], owner_id: str) -> Dict[str, Any]:
+    mission_id = str(mission["id"])
+    with _session_scope() as session:
+        session.merge(
+            MissionStore(
+                mission_id=mission_id,
+                owner_id=str(owner_id),
+                status=str(mission.get("status", "unknown")),
+                created_at=_mission_created_at_epoch(mission),
+                payload=_dumps(mission),
+            )
+        )
+    return mission
+
+
+def get_mission_record(mission_id: str) -> Optional[Dict[str, Any]]:
+    with _session_scope() as session:
+        row = session.get(MissionStore, str(mission_id))
+        parsed = _loads(row.payload) if row else {}
+        return parsed or None
+
+
+def list_mission_records(owner_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    with _session_scope() as session:
+        query = session.query(MissionStore)
+        if owner_id:
+            query = query.filter(MissionStore.owner_id == owner_id)
+        rows = query.order_by(MissionStore.created_at.desc()).all()
+        return [parsed for row in rows if (parsed := _loads(row.payload))]
 
 
 def aggregate_settlements(cycle: str, team_id: Optional[str]) -> List[Dict[str, Any]]:
@@ -559,10 +783,11 @@ def backup_database(label: Optional[str] = None) -> Dict[str, Any]:
         raise FileNotFoundError(f"DB not found: {source}")
     backup_dir = source.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
     suffix = f"-{label}" if label else ""
     target = backup_dir / f"bremen-{stamp}{suffix}.db"
-    shutil.copy2(source, target)
+    with sqlite3.connect(source) as source_connection, sqlite3.connect(target) as target_connection:
+        source_connection.backup(target_connection)
     return {"source": str(source), "backup": str(target), "size_bytes": target.stat().st_size}
 
 
@@ -602,7 +827,7 @@ def run_integrity_checks() -> Dict[str, Any]:
 
     orphan_ledger_receivers: List[Dict[str, str]] = []
     for row in ledger:
-        receiver = str(row.get("team_id") or row.get("source_team_id") or "")
+        receiver = str(row.get("receiver_team_id") or row.get("team_id") or row.get("source_team_id") or "")
         if receiver and receiver not in team_ids:
             orphan_ledger_receivers.append({"receiver_team_id": receiver, "kind": str(row.get("kind", ""))})
 

@@ -42,3 +42,18 @@ schemas:
       unit_tests: string
       integration_tests: string
       coverage_target: string
+
+  writer:
+    allow_any_object: true
+
+  translator:
+    allow_any_object: true
+
+  data:
+    allow_any_object: true
+
+  image:
+    allow_any_object: true
+
+  agent:
+    allow_any_object: true

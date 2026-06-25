@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 
 VALID_SCOPES = {"global", "team", "mission", "member", "ephemeral"}
+VALID_CLASSIFICATIONS = {"public", "internal", "restricted"}
 
 
 @dataclass
@@ -29,6 +30,12 @@ class MemoryScopeEngine:
     def put(self, record: MemoryRecord) -> None:
         if record.scope not in VALID_SCOPES:
             raise ValueError(f"invalid_scope:{record.scope}")
+        if record.classification not in VALID_CLASSIFICATIONS:
+            raise ValueError(f"invalid_classification:{record.classification}")
+        if not record.scope_id:
+            raise ValueError("scope_id_required")
+        if not record.key:
+            raise ValueError("memory_key_required")
         self._storage.setdefault(record.scope, {}).setdefault(record.scope_id, {})[record.key] = record
 
     def get_scope(self, scope: str, scope_id: str) -> List[Dict[str, Any]]:
