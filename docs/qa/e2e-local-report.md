@@ -1,0 +1,49 @@
+# Local E2E QA Report
+
+Date: 2026-06-25
+
+Environment:
+
+- Frontend: `http://127.0.0.1:3103`
+- API: `http://127.0.0.1:8100`
+- Auth: JWT-only
+- Runtime: isolated temporary database and decision log
+- Next build cache: isolated from the existing port 3003 server
+
+## Results
+
+| Scenario | Result | Evidence |
+| --- | --- | --- |
+| API health and security | Pass | `healthy`, `jwt_only`, encrypted key storage, indexed decision log |
+| Account A workspace restore | Pass | Three A nodes and two edges restored |
+| Account B isolation | Pass | B graph visible, A graph absent |
+| Return to account A | Pass | A positions, links, approval settings restored |
+| Flow detail node selection | Pass | Node click moved to selection settings |
+| Approval settings | Pass | `before_run`, admin queue, target persisted |
+| Condition settings | Pass | Time condition persisted and runtime contract rendered |
+| Loop region | Pass | Two selected steps created a fixed-boundary loop |
+| Human Gate | Pass | Mission stopped at `awaiting_approval` |
+| Approval and resume | Pass | Approval event emitted and mission completed |
+| Runs and Chat consistency | Pass | Same mission ID, completed state, timeline and owner |
+| Console errors | Pass | No application console error or warning during the core flow |
+| Horizontal overflow at 1280 | Pass | Document width matched client width |
+
+## Findings Fixed During QA
+
+### P1: New mission briefly displayed local preview
+
+The Chat page could commit to fallback before the initial API snapshot was
+available. Runtime snapshot loading now retries once, and WebSocket fallback
+waits for the API snapshot before switching source mode.
+
+### P1: QA and existing dev servers shared `.next`
+
+Ports 3003 and 3103 used the same Next build cache, which mixed demo/live
+environment chunks. The isolated stack now uses a run-specific `distDir`.
+
+## Remaining Manual Check
+
+The in-app Browser viewport capability retained a 1280px layout width while
+requesting 663px and 627px. Those two widths still need one manual browser
+resize pass before production promotion. Staging deployment remains blocked
+until Railway GitHub authentication is completed.
