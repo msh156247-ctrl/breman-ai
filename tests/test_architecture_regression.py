@@ -135,6 +135,16 @@ def test_production_security_guard_requires_strong_jwt_only_configuration(monkey
     validate_production_security()
 
 
+def test_staging_uses_production_security_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BREMEN_ENV", "staging")
+    monkeypatch.setenv("BREMEN_AUTH_JWT_ONLY", "false")
+    monkeypatch.delenv("BREMEN_JWT_SECRET", raising=False)
+    monkeypatch.delenv("BREMEN_KEY_ENCRYPTION_SECRET", raising=False)
+    monkeypatch.delenv("BREMEN_ADMIN_TOKEN", raising=False)
+    with pytest.raises(RuntimeError, match="unsafe_production_security_configuration"):
+        validate_production_security()
+
+
 def test_decision_log_rotates_and_keeps_indexed_mission_queries(tmp_path: Path) -> None:
     log = DecisionLog(tmp_path / "decision_log.jsonl", max_bytes=1024, archive_count=2)
     for index in range(40):

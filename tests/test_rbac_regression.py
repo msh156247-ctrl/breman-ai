@@ -1518,6 +1518,37 @@ def test_key_registry_does_not_mutate_deployment_environment(
     assert os.environ[env_name] == "deployment-managed-key"
 
 
+def test_jwt_only_owner_can_manage_keys_without_browser_admin_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = "google"
+    monkeypatch.setenv("BREMEN_AUTH_JWT_ONLY", "true")
+    token = jwt.encode(
+        {
+            "sub": "jwt-key-owner",
+            "role": "owner",
+            "exp": int(time.time()) + 3600,
+        },
+        DEFAULT_JWT_SECRET,
+        algorithm="HS256",
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        registered = client.post(
+            "/api/keys/register",
+            headers=headers,
+            json={"provider": provider, "api_key": f"jwt-key-{uuid.uuid4().hex}"},
+        )
+        assert registered.status_code == 200
+        assert registered.json()["actor"] == "jwt-key-owner"
+
+        deleted = client.delete(f"/api/keys/{provider}", headers=headers)
+        assert deleted.status_code == 200
+        assert deleted.json()["actor"] == "jwt-key-owner"
+    finally:
+        monkeypatch.delenv("BREMEN_AUTH_JWT_ONLY", raising=False)
+
+
 def test_key_status_exposes_all_market_providers() -> None:
     res = client.get("/api/keys/status", headers=_headers("owner-u", "owner"))
     assert res.status_code == 200

@@ -27,3 +27,7 @@ export function wsUrl(path: string, query?: string): string {
   const cleanQuery = query ? query.replace(/^\?/, "") : "";
   return `${wsBaseUrl()}${normalizedPath}${cleanQuery ? `?${cleanQuery}` : ""}`;
 }
+
+export function isJwtOnlyClientMode(): boolean {
+  return (process.env.NEXT_PUBLIC_BREMEN_AUTH_MODE || "").trim().toLowerCase() === "jwt_only";
+}

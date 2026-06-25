@@ -42,6 +42,7 @@ import {
 } from "../../lib/api";
 import { API_PROVIDER_CONFIG } from "../../lib/constants";
 import { isDemoModeEnabled } from "../../lib/demo-mode";
+import { isJwtOnlyClientMode } from "../../lib/runtime-config";
 import { useAppStore } from "../../stores/app.store";
 import type { APIProvider } from "../../types";
 
@@ -98,6 +99,7 @@ function MyPageInner() {
 
   const [activeTab, setActiveTab] = useState<MyTab>(() => normalizeTabParam(tabParam));
   const isDemoMode = isDemoModeEnabled();
+  const jwtOnlyMode = isJwtOnlyClientMode();
   const [keys, setKeys] = useState<ProviderKeyStatus[]>(() => (isDemoMode ? MOCK_KEY_STATUSES : []));
   const [settlements, setSettlements] = useState<SettlementRecord[]>(() =>
     isDemoMode ? MOCK_SETTLEMENTS : []
@@ -138,8 +140,14 @@ function MyPageInner() {
   const [approvalError, setApprovalError] = useState("");
 
   useEffect(() => {
-    setActiveTab(normalizeTabParam(tabParam));
-  }, [tabParam]);
+    const nextTab = normalizeTabParam(tabParam);
+    if (jwtOnlyMode && nextTab === "session") {
+      setActiveTab("overview");
+      router.replace("/mypage?tab=overview", { scroll: false });
+      return;
+    }
+    setActiveTab(nextTab);
+  }, [jwtOnlyMode, router, tabParam]);
 
   useEffect(() => {
     if (tabParam !== "agents" && tabParam !== "members") return;
@@ -452,16 +460,18 @@ function MyPageInner() {
           <LayoutDashboard className="h-4 w-4" />
           개요
         </button>
-        <button
-          type="button"
-          onClick={() => goTab("session")}
-          className={`flex min-h-10 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold sm:justify-start sm:px-5 ${
-            activeTab === "session" ? "bg-white/10 text-white" : "text-gray-500"
-          }`}
-        >
-          <ShieldCheck className="h-4 w-4" />
-          세션
-        </button>
+        {!jwtOnlyMode ? (
+          <button
+            type="button"
+            onClick={() => goTab("session")}
+            className={`flex min-h-10 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold sm:justify-start sm:px-5 ${
+              activeTab === "session" ? "bg-white/10 text-white" : "text-gray-500"
+            }`}
+          >
+            <ShieldCheck className="h-4 w-4" />
+            세션
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={() => goTab("keys")}
@@ -543,7 +553,7 @@ function MyPageInner() {
         </div>
       ) : null}
 
-      {activeTab === "session" ? (
+      {activeTab === "session" && !jwtOnlyMode ? (
         <div className="space-y-6">
           <div className="rounded-2xl border border-white/10 bg-[#111111] p-6">
             <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -725,16 +735,18 @@ function MyPageInner() {
                   placeholder={KEY_PROVIDER_COPY[keyForm.provider].placeholder}
                 />
               </label>
-              <label className="text-sm font-semibold text-gray-300 md:col-span-2">
-                관리자 토큰
-                <input
-                  value={keyForm.adminToken}
-                  onChange={(event) => setKeyForm((prev) => ({ ...prev, adminToken: event.target.value }))}
-                  className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-blue-400"
-                  type="password"
-                  placeholder="BREMEN_ADMIN_TOKEN"
-                />
-              </label>
+              {!jwtOnlyMode ? (
+                <label className="text-sm font-semibold text-gray-300 md:col-span-2">
+                  관리자 토큰
+                  <input
+                    value={keyForm.adminToken}
+                    onChange={(event) => setKeyForm((prev) => ({ ...prev, adminToken: event.target.value }))}
+                    className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-blue-400"
+                    type="password"
+                    placeholder="BREMEN_ADMIN_TOKEN"
+                  />
+                </label>
+              ) : null}
             </div>
             <button
               type="submit"

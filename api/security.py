@@ -15,7 +15,7 @@ AUTH_JWT_ONLY_ENV = "BREMEN_AUTH_JWT_ONLY"
 JWT_ISSUER_ENV = "BREMEN_JWT_ISSUER"
 JWT_AUDIENCE_ENV = "BREMEN_JWT_AUDIENCE"
 DEPLOYMENT_ENV = "BREMEN_ENV"
-PRODUCTION_ENV_NAMES = {"prod", "production"}
+PRODUCTION_ENV_NAMES = {"staging", "prod", "production"}
 
 
 def is_truthy(value: str | None) -> bool:

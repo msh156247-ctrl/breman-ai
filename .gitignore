@@ -37,6 +37,13 @@ runtime/*.db-wal
 runtime/*.sqlite3
 runtime/*.sqlite3-shm
 runtime/*.sqlite3-wal
+runtime/e2e-*/
+runtime/e2e-session-*.json
+runtime/e2e-stack-*.json
+runtime/*-dev.out.log
+runtime/*-dev.err.log
+frontend/.next-e2e-*/
+frontend/.next-build-*/
 runtime/backups/
 runtime/*.jsonl
 

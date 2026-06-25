@@ -595,6 +595,19 @@ def _require_admin(x_admin_token: str | None) -> None:
         raise HTTPException(status_code=403, detail="admin_token_required")
 
 
+def _require_admin_token_or_jwt_owner(
+    identity: Dict[str, str],
+    x_admin_token: str | None,
+) -> None:
+    if (
+        _is_jwt_only_mode()
+        and request_identity_source_ctx.get() == "jwt"
+        and identity.get("role") in {"owner", "admin"}
+    ):
+        return
+    _require_admin(x_admin_token)
+
+
 def _resolve_identity(x_user_id: str | None, x_user_role: str | None) -> Dict[str, str]:
     token_identity = request_identity_ctx.get()
     if token_identity is not None:
@@ -2542,9 +2555,9 @@ async def register_api_key(
     x_user_id: str | None = Header(default=None, alias="X-User-Id"),
     x_user_role: str | None = Header(default=None, alias="X-User-Role"),
 ) -> Dict[str, Any]:
-    _require_admin(x_admin_token)
     identity = _resolve_identity(x_user_id, x_user_role)
     _require_roles(identity, {"owner", "admin"})
+    _require_admin_token_or_jwt_owner(identity, x_admin_token)
     provider = request.provider.strip().lower()
     if provider not in PROVIDER_ENV_MAP:
         raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
@@ -2588,9 +2601,9 @@ async def delete_api_key(
     x_user_id: str | None = Header(default=None, alias="X-User-Id"),
     x_user_role: str | None = Header(default=None, alias="X-User-Role"),
 ) -> Dict[str, Any]:
-    _require_admin(x_admin_token)
     identity = _resolve_identity(x_user_id, x_user_role)
     _require_roles(identity, {"owner", "admin"})
+    _require_admin_token_or_jwt_owner(identity, x_admin_token)
     normalized = provider.strip().lower()
     if normalized not in PROVIDER_ENV_MAP:
         raise HTTPException(status_code=400, detail=f"Unsupported provider: {normalized}")
