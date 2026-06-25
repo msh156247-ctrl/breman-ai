@@ -1,4 +1,4 @@
-import { Agent, TeamTemplate } from "../types";
+import { Agent, MissionRunRecord } from "../types";
 
 export const MOCK_AGENTS: Agent[] = [
   {
@@ -19,6 +19,9 @@ export const MOCK_AGENTS: Agent[] = [
     model_name: "GPT-4o",
     model_version: "2024-05",
     updated_at: "2026-05-12",
+    ontology_unit: "canvas_node",
+    unit_role: "노드 구현 담당",
+    responsibility: "요구사항을 실행 가능한 코드 산출물로 변환합니다.",
     capabilities: ["FastAPI", "SQL schema generation", "React refactor", "Test generation"],
     avg_latency_ms: 2340,
     success_rate: 98.2,
@@ -43,6 +46,9 @@ export const MOCK_AGENTS: Agent[] = [
     model_name: "Claude 3.5 Sonnet",
     model_version: "2024-10",
     updated_at: "2026-05-10",
+    ontology_unit: "role_binding",
+    unit_role: "품질 게이트 담당",
+    responsibility: "실행 결과를 검토하고 승인 기준을 적용합니다.",
     capabilities: ["Security audit", "Performance review", "Architecture review"],
     avg_latency_ms: 3120,
     success_rate: 96.7,
@@ -68,6 +74,9 @@ export const MOCK_AGENTS: Agent[] = [
     model_name: "Claude 3 Haiku",
     model_version: "2024-08",
     updated_at: "2026-05-07",
+    ontology_unit: "agent_profile",
+    unit_role: "프로필 산출 담당",
+    responsibility: "재사용 가능한 역할 산출물을 만듭니다.",
     capabilities: ["Copy writing", "Tone conversion", "SNS draft"],
     avg_latency_ms: 980,
     success_rate: 97.5,
@@ -92,6 +101,9 @@ export const MOCK_AGENTS: Agent[] = [
     model_name: "Stable Diffusion XL",
     model_version: "1.0",
     updated_at: "2026-05-08",
+    ontology_unit: "agent_profile",
+    unit_role: "시각 산출 담당",
+    responsibility: "Unit 설명을 검토 가능한 시각 산출물로 변환합니다.",
     capabilities: ["UI mockup", "Illustration", "Style transfer"],
     avg_latency_ms: 4210,
     success_rate: 94.2,
@@ -116,6 +128,9 @@ export const MOCK_AGENTS: Agent[] = [
     model_name: "GPT-4o-mini",
     model_version: "2024-07",
     updated_at: "2026-05-11",
+    ontology_unit: "cost_ledger",
+    unit_role: "비용/데이터 분석 담당",
+    responsibility: "실행 비용과 품질 지표를 분석합니다.",
     capabilities: ["Pandas analysis", "Chart code", "KPI summary"],
     avg_latency_ms: 1870,
     success_rate: 97.9,
@@ -125,60 +140,14 @@ export const MOCK_AGENTS: Agent[] = [
   }
 ];
 
-export const MOCK_TEAMS: TeamTemplate[] = [
-  {
-    id: "team-001",
-    name: "풀스택 개발팀",
-    description: "기획부터 배포까지 자동화. 코드 작성 → 리뷰 → 테스트 → 문서화 전 과정을 AI가 처리합니다.",
-    category: "개발",
-    creator: "devmaster_kim",
-    creator_avatar: "👨‍💻",
-    agent_ids: ["agent-001", "agent-002"],
-    workflow: ["기획", "설계", "개발", "리뷰", "테스트"],
-    rating: 4.9,
-    usage_count: 1247,
-    royalty_per_execution: 0.05,
-    tags: ["풀스택", "자동화", "CI/CD"],
-    is_featured: true,
-    estimated_time: "약 5-10분",
-    estimated_cost: 0.08
-  },
-  {
-    id: "team-002",
-    name: "블로그 콘텐츠 자동화팀",
-    description: "주제만 입력하면 SEO 최적화된 블로그 포스팅을 완성합니다.",
-    category: "글쓰기",
-    creator: "content_master",
-    creator_avatar: "✍️",
-    agent_ids: ["agent-003"],
-    workflow: ["초안작성", "교정", "SEO최적화", "최종검토"],
-    rating: 4.8,
-    usage_count: 892,
-    royalty_per_execution: 0.03,
-    tags: ["블로그", "SEO", "콘텐츠마케팅"],
-    is_featured: true,
-    estimated_time: "약 3-5분",
-    estimated_cost: 0.04
-  }
-];
-
-export type MockMissionRunRecord = {
-  id: string;
-  goal: string;
-  state: "queued" | "running" | "completed" | "failed" | "awaiting_approval" | "blocked";
-  team_label: string;
-  started_at: string;
-  est_cost_usd: number;
-  latency_sec: number;
-  demo: boolean;
-};
+export type MockMissionRunRecord = MissionRunRecord;
 
 export const MOCK_MISSION_RUNS: MockMissionRunRecord[] = [
   {
     id: "demo-mission",
     goal: "데모: API 스펙 초안 + QA 피드백 루프",
     state: "running",
-    team_label: "풀스택 개발팀 (fork)",
+    workflow_label: "풀스택 개발 워크플로우",
     started_at: "2026-05-15T04:12:00",
     est_cost_usd: 0.056,
     latency_sec: 42,
@@ -188,7 +157,7 @@ export const MOCK_MISSION_RUNS: MockMissionRunRecord[] = [
     id: "demo-approval-01",
     goal: "프로덕션 배포 승인 전 보안 점검",
     state: "awaiting_approval",
-    team_label: "Release Ops",
+    workflow_label: "Release Ops",
     started_at: "2026-05-14T18:40:00",
     est_cost_usd: 0.031,
     latency_sec: 120,
@@ -198,7 +167,7 @@ export const MOCK_MISSION_RUNS: MockMissionRunRecord[] = [
     id: "run-7f2a",
     goal: "블로그 주제 → SEO 포스트 자동화",
     state: "completed",
-    team_label: "블로그 콘텐츠 자동화팀",
+    workflow_label: "블로그 콘텐츠 자동화 워크플로우",
     started_at: "2026-05-13T09:22:00",
     est_cost_usd: 0.041,
     latency_sec: 215,
@@ -206,9 +175,9 @@ export const MOCK_MISSION_RUNS: MockMissionRunRecord[] = [
   },
   {
     id: "run-3c91",
-    goal: "Router: risk_score 분기 후 Security 팀 에스컬레이션",
+    goal: "Router: risk_score 분기 후 Security 검토 에스컬레이션",
     state: "blocked",
-    team_label: "cross-team · team-001↔team-002",
+    workflow_label: "cross-workflow · workflow-001↔workflow-002",
     started_at: "2026-05-12T11:05:00",
     est_cost_usd: 0.089,
     latency_sec: 480,
@@ -218,7 +187,7 @@ export const MOCK_MISSION_RUNS: MockMissionRunRecord[] = [
     id: "run-9aa1",
     goal: "스키마 mismatch 재시도 2회 후 실패",
     state: "failed",
-    team_label: "풀스택 개발팀",
+    workflow_label: "풀스택 개발 워크플로우",
     started_at: "2026-05-11T16:33:00",
     est_cost_usd: 0.072,
     latency_sec: 360,
@@ -234,7 +203,7 @@ export type MockKeyStatus = {
 
 export type MockSettlement = {
   period: string;
-  receiver_team_id: string;
+  receiver_workflow_id: string;
   royalty_cost: number;
   total_cost: number;
   entries: number;
@@ -243,15 +212,16 @@ export type MockSettlement = {
 export const MOCK_KEY_STATUSES: MockKeyStatus[] = [
   { provider: "openai", registered: true, masked: "sk-...A91K" },
   { provider: "anthropic", registered: false, masked: null },
+  { provider: "gemini", registered: true, masked: "AIza...Q7M" },
   { provider: "stability", registered: true, masked: "sk-...9XZ2" },
-  { provider: "google", registered: true, masked: "AIza...Q7M" }
+  { provider: "google", registered: false, masked: null }
 ];
 
 export const MOCK_SETTLEMENTS: MockSettlement[] = [
-  { period: "2026-W18", receiver_team_id: "team-001", royalty_cost: 12.42, total_cost: 45.1, entries: 481 },
-  { period: "2026-W18", receiver_team_id: "team-002", royalty_cost: 8.14, total_cost: 27.8, entries: 337 },
-  { period: "2026-W17", receiver_team_id: "team-001", royalty_cost: 10.31, total_cost: 39.0, entries: 412 },
-  { period: "2026-W17", receiver_team_id: "team-002", royalty_cost: 7.02, total_cost: 24.5, entries: 298 },
-  { period: "2026-W16", receiver_team_id: "team-001", royalty_cost: 9.88, total_cost: 36.2, entries: 390 },
-  { period: "2026-W16", receiver_team_id: "team-002", royalty_cost: 6.67, total_cost: 22.9, entries: 271 }
+  { period: "2026-W18", receiver_workflow_id: "workflow-001", royalty_cost: 12.42, total_cost: 45.1, entries: 481 },
+  { period: "2026-W18", receiver_workflow_id: "workflow-002", royalty_cost: 8.14, total_cost: 27.8, entries: 337 },
+  { period: "2026-W17", receiver_workflow_id: "workflow-001", royalty_cost: 10.31, total_cost: 39.0, entries: 412 },
+  { period: "2026-W17", receiver_workflow_id: "workflow-002", royalty_cost: 7.02, total_cost: 24.5, entries: 298 },
+  { period: "2026-W16", receiver_workflow_id: "workflow-001", royalty_cost: 9.88, total_cost: 36.2, entries: 390 },
+  { period: "2026-W16", receiver_workflow_id: "workflow-002", royalty_cost: 6.67, total_cost: 22.9, entries: 271 }
 ];

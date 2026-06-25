@@ -1,11 +1,11 @@
 # Bremen Web MVP
 
-FastAPI(WebSocket) + Next.js(React Flow) 기반 브래맨 실시간 대시보드 MVP입니다.
+FastAPI(WebSocket) + Next.js 기반의 Unit 중심 실행 워크플로우 콘솔입니다. Studio는 카드형 단계 편집 UI를 사용하고, 그래프 타입/직렬화에는 React Flow 자료형을 재사용합니다.
 
 ## Canonical Path
 
-- 공식 프론트엔드 경로: `c:/Users/명성현/Desktop/project/breman/bremen-web/frontend`
-- 구 Vite 실험 폴더(`breman-ui`)는 deprecated 상태입니다.
+- 공식 프론트엔드 경로: `frontend/`
+- Python API와 Next.js 프론트가 같은 저장소의 runtime schema를 공유합니다.
 
 ## 1) 백엔드 실행
 
@@ -26,6 +26,28 @@ npm run dev
 ```
 
 접속: `http://localhost:3000`
+
+프론트엔드는 Next.js 14 기준으로 Node.js `>=18.17.0`이 필요합니다. 오래된 Node(예: 12.x)에서는 빌드가 실패합니다.
+
+### Runtime URL 설정
+
+로컬 기본값:
+
+- API: `http://localhost:8000`
+- WebSocket: API 주소에서 자동 파생(`ws://localhost:8000`)
+
+배포/원격 백엔드를 붙일 때는 `frontend/.env.local`에 아래 값을 지정하세요.
+
+```bash
+NEXT_PUBLIC_BREMEN_API_BASE_URL=https://your-api.example.com
+NEXT_PUBLIC_BREMEN_WS_BASE_URL=wss://your-api.example.com
+```
+
+백엔드 CORS 허용 origin은 `BREMEN_CORS_ORIGINS`로 쉼표 구분 지정할 수 있습니다.
+
+```bash
+BREMEN_CORS_ORIGINS=http://localhost:3000,https://your-frontend.example.com
+```
 
 ## Vercel 배포 (프론트만)
 
@@ -57,12 +79,15 @@ npm run dev
 - `GET /api/missions/{mission_id}/timeline`
 - `GET /api/missions/{mission_id}/evaluations`
 - `POST /api/missions/{mission_id}/approve`
+- `GET /api/approvals/pending`
 - `GET /api/capabilities`
 - `POST /api/keys/register`
 - `GET /api/keys/status`
 - `GET /api/keys-history?limit=20&offset=0&provider=...&actor=...&action=...`
 - `DELETE /api/keys/{provider}`
 - `POST /api/members`
+- `GET /api/members`
+- `GET /api/members/{member_id}`
 - `GET /api/members/{member_id}/trust`
 - `GET /api/policies`
 - `POST /api/policies/check`
@@ -85,12 +110,17 @@ npm run dev
 - `GET /api/ledger/settlements?cycle=daily|weekly|monthly&team_id=...`
 - `GET /api/admin/db/integrity` (admin)
 - `POST /api/admin/db/backup?label=...` (admin)
+- `POST /api/auth/token` (admin, local/dev session token issuance)
+- `GET /api/auth/whoami`
+- `GET /api/auth/permissions`
 - `GET /api/graph/teams`
 - `GET /api/ontology`
 - `GET /api/routing/preview?goal=...`
 - `GET /api/health`
 - `WS /ws`
 - `WS /ws/{mission_id}`
+
+`POST /api/missions`는 기본 필드(`goal`, `budget`, `use_mock`) 외에 스튜디오 실행 메타데이터(`workflow_id`, `workflow_label`, `workflow_graph`, `auto_mode`)를 저장합니다. `team_id`, `team_label`, `team_graph`는 기존 클라이언트를 위한 deprecated 호환 별칭이며 `/api/compatibility`에서 현재 매핑을 확인할 수 있습니다.
 
 ## Ontology Runtime
 
@@ -111,28 +141,78 @@ npm run dev
 - `priority`(높을수록 우선), `include_regex`, `exclude_regex`도 지원합니다.
 - `/api/routing/preview`로 선택된 워크플로와 룰 매칭 근거를 확인할 수 있습니다.
 
+### Workflow Condition DSL
+
+Studio graph의 노드 조건, Router 분기, Loop 종료 조건은 백엔드의 동일한 `condition_dsl_v1` 평가기를 사용합니다. 지원 컨텍스트는 `mission`, `task`, `tasks`, `deps`, `previous`, `result`, `budget`, `spent`, `now`, `loop`입니다.
+
+```python
+result.done == true
+previous.score >= 0.9
+contains(path("previous.architecture"), "마이크로서비스")
+number(path("tasks.plan.confidence")) >= 0.9
+matches(path("mission.goal"), "review|검토")
+```
+
+지원 함수: `path`, `exists`, `contains`, `matches`, `startswith`, `endswith`, `lower`, `upper`, `text`, `number`, `count`, `any`, `all`.
+
+구조화 조건도 같은 평가기로 연결됩니다.
+
+- `condition_mode=time`: `condition_time_rule`
+- `condition_mode=data`: `condition_data_path`, `condition_operator`, `condition_value`
+- `condition_mode=composite`: time/data/expression을 순서대로 모두 만족해야 실행
+- Router branch는 `expression: "else"`를 fallback 분기로 사용할 수 있습니다.
+
+### Loop Region Semantics
+
+Studio의 반복 영역은 런타임에서 `loop_region_v1`로 정규화되어 저장됩니다. 원본 `nodeIds/startNodeId/endNodeId/exitConditionNodeId/exitNodeId/repeatCount`는 유지하면서 아래 canonical 필드를 함께 제공합니다.
+
+- `node_ids`: 실제 반복 대상 노드 목록, 실행 step 순서로 정렬
+- `repeat_start_node_id` / `repeat_end_node_id`: 반복 재실행의 시작/끝 노드
+- `exit_condition_node_id`: 종료 조건을 평가할 결과 노드
+- `exit_node_id`: 종료 조건 만족 시 이동할 외부 노드 또는 `__finish__`
+- `max_iterations`: 최대 반복 횟수, 1~50으로 제한
+- `runtime_semantics.version`: `loop_region_v1`
+
+v1 실행 의미는 명시적으로 후처리 반복입니다. 최초 실행은 일반 DAG로 수행하고, 이후 반복 영역에 포함된 노드만 step 순서대로 재실행합니다. 종료 조건이 만족되면 반복을 중단하며, `exit_node_id`는 타임라인/스냅샷에 라우팅 힌트로 기록됩니다. 이 구조는 다음 단계에서 반복을 DAG 스케줄러 내부 제어로 끌어올릴 때도 같은 저장 모델을 재사용하기 위한 기준입니다.
+
 ## Decision Log
 
-- 이벤트는 `runtime/decision_log.jsonl`에 누적 저장됩니다.
+- 이벤트 원본은 `runtime/decision_log.jsonl`에 저장되고, 미션별 조회는 `decision_log.jsonl.index.sqlite3` 인덱스를 사용합니다.
+- `BREMEN_DECISION_LOG_MAX_BYTES`(기본 8 MiB)와 `BREMEN_DECISION_LOG_ARCHIVE_COUNT`(기본 5)로 순환 보관 크기를 조정할 수 있습니다.
 - 미션별 이벤트는 `/api/missions/{mission_id}/timeline`에서 조회 가능합니다.
 
-## DB Persistence (P1 Stage-1)
+## Approval Channel Delivery
+
+Human Gate 승인 알림은 `admin_queue`, `email`, `sms`, `kakao` 채널로 정규화됩니다. `email`은 SMTP 또는 webhook, `sms`/`kakao`는 webhook 설정이 있으면 실제 전송을 시도하고, 설정이 없으면 `external_outbox`에 `outbox_pending` 상태로 남습니다.
+
+```bash
+BREMEN_PUBLIC_BASE_URL=https://your-frontend.example.com
+BREMEN_APPROVAL_WEBHOOK_TOKEN=shared-secret
+BREMEN_APPROVAL_EMAIL_WEBHOOK_URL=https://notify.example.com/email
+BREMEN_APPROVAL_SMS_WEBHOOK_URL=https://notify.example.com/sms
+BREMEN_APPROVAL_KAKAO_WEBHOOK_URL=https://notify.example.com/kakao
+
+# Email SMTP fallback, used when BREMEN_APPROVAL_EMAIL_WEBHOOK_URL is not set.
+BREMEN_SMTP_HOST=smtp.example.com
+BREMEN_SMTP_PORT=587
+BREMEN_SMTP_USER=bot@example.com
+BREMEN_SMTP_PASSWORD=...
+BREMEN_SMTP_FROM=Bremen <bot@example.com>
+```
+
+전송 결과는 `approval_notification_delivery` 이벤트와 `/api/approvals/pending`의 `notifications[].delivery_status`에 반영됩니다.
+
+## DB Persistence
 
 - 기본 DB: `runtime/bremen.db` (SQLite)
 - ORM: SQLAlchemy
-- 1차 영속화 적용 범위:
-  - Provider Key Registry
-  - Key History (audit trail)
-- 스키마(placeholder)로 `members`, `teams`, `channels`, `contracts`, `ledger` 테이블도 생성되어 다음 단계 전환 준비가 완료됩니다.
-
-## DB Persistence (P1 Stage-2)
-
-- `member_store`, `team_store`, `channel_store`, `contract_store`, `ledger_store` JSON payload 기반 영속화 적용
+- Provider key, key history, member, team, channel, contract, ledger, mission, workspace settings, memory 레코드를 영속화합니다.
+- `member_store`, `team_store`, `channel_store`, `contract_store`, `ledger_store`는 JSON payload 기반으로 필드 확장을 허용합니다.
 - 서버 재시작 후에도 아래 데이터 유지:
-  - member / team / channel / contract / ledger
+  - mission / workspace / memory / member / team / channel / contract / ledger
 - 기존 API 응답 포맷은 유지하면서 저장소만 DB로 전환되었습니다.
 
-## DB Persistence (P1 Stage-3)
+### DB 운영
 
 - `ledger_store`에 집계용 컬럼(`receiver_team_id`, `provider_cost`, `royalty_cost`, `platform_fee`, `total_cost`) 추가
 - 경량 마이그레이션(앱 시작 시 `ALTER TABLE` 보강) 적용
@@ -160,7 +240,8 @@ npm run dev
 - 개인이 발급한 provider API key를 먼저 등록해야 해당 provider를 사용할 수 있습니다.
 - 관리자 보호: key 변경 API는 `X-Admin-Token` 헤더가 필요합니다.
   - 서버 환경변수: `BREMEN_ADMIN_TOKEN` (미설정 시 기본값 `bremen-admin-dev`)
-- 프론트에서는 `NEXT_PUBLIC_BREMEN_ADMIN_TOKEN` 설정이 없으면 key 등록/삭제 UI가 차단됩니다.
+- 지원 provider: `openai`, `anthropic`, `gemini`, `stability`, `google`
+- 프론트 `내 공간 > API 키 관리`에서 키 등록/삭제가 가능하며, `NEXT_PUBLIC_BREMEN_ADMIN_TOKEN`을 설정하면 관리자 토큰 입력값이 미리 채워집니다.
 - actor는 인증 헤더(`X-User-Id`)에서 서버가 자동 기록합니다. (`X-User-Id` 없으면 `system`)
 - 권한 헤더(`X-User-Role`) 기반 role 체크(예: owner/admin) 적용
 - 키 등록 API:
@@ -175,6 +256,7 @@ npm run dev
 ### Auth Debug
 
 - `GET /api/auth/whoami` (`X-User-Id`, `X-User-Role`)로 서버가 인식한 identity를 확인할 수 있습니다.
+- `POST /api/auth/token` (`X-Admin-Token` 필요)으로 로컬/개발용 JWT 세션을 발급할 수 있습니다.
 
 ### Auth Header Standard
 
@@ -185,11 +267,14 @@ npm run dev
   - `X-Admin-Token` (`BREMEN_ADMIN_TOKEN`과 일치 필요)
 - JWT(1차 전환):
   - `Authorization: Bearer <jwt>` 지원
+  - `POST /api/auth/token`은 `BREMEN_ADMIN_TOKEN`으로 보호되며 `user_id`, `role`, `ttl_seconds`를 받아 JWT를 발급합니다.
   - JWT payload의 `sub`(또는 `user_id`) + `role`이 유효하면 서버가 이를 우선 신뢰합니다.
-  - JWT가 없을 때 기존 `X-User-Id`, `X-User-Role` fallback 동작을 유지합니다.
+- JWT가 없을 때 기존 `X-User-Id`, `X-User-Role` fallback 동작을 유지합니다.
+- 운영에서는 `BREMEN_AUTH_JWT_ONLY=true`로 header fallback을 끄세요. hybrid 모드는 로컬 전환용이며 `/api/health`에 `header_auth_fallback_enabled` 경고가 표시됩니다.
   - 개발 기본 시크릿: `BREMEN_JWT_SECRET` 미설정 시 내장 dev secret 사용 (운영에서는 반드시 환경변수 설정 권장)
   - JWT 검증: `exp` 필수, `BREMEN_JWT_ISSUER`/`BREMEN_JWT_AUDIENCE` 설정 시 `iss`/`aud` 검증 수행
   - `BREMEN_AUTH_JWT_ONLY=true` 설정 시 헤더 fallback 없이 JWT-only 모드로 동작
+  - `BREMEN_ENV=production`에서는 JWT-only, 32자 이상 JWT/암호화 시크릿, 24자 이상 관리자 토큰이 모두 없으면 서버 시작을 거부합니다.
 - 권한 거부 시 표준 응답:
   - `403 {"detail":"role_not_allowed:<role>"}`
   - 리소스 스코프 거부는 목적별 detail(`mission_access_denied`, `team_view_permission_required` 등) 반환
@@ -268,9 +353,8 @@ npm run dev
 - `GET /ws`(global stream): `owner|admin`만 연결 허용
 - `GET /ws/{mission_id}`(mission stream): `owner|admin` 또는 mission owner만 연결 허용
 - 권한이 없으면 WebSocket close code `1008`로 종료됩니다.
-- 프론트는 role/상태에 따라 자동 라우팅:
-  - `owner|admin` + mission 미선택: `/ws`
-  - mission 선택/실행 중: `/ws/{mission_id}` (member/supervisor도 자기 mission 실시간 이벤트 수신 가능)
+- 실행 상세 화면은 `/ws/{mission_id}`를 사용해 자기 mission 이벤트만 구독합니다.
+- `/ws` global stream은 운영 도구가 필요할 때 `owner|admin`만 사용할 수 있습니다.
 
 ### Policy/Memory Guard (Phase-7)
 
@@ -302,7 +386,7 @@ npm run dev
   - header: `X-User-Id`, `X-User-Role`
   - optional query: `mission_id`
   - 반환: `can_manage_keys`, `can_run_mission`, `can_manage_policies`, `can_access_global_ws`, `can_access_mission`
-- 프론트는 버튼/패널 활성화를 role 하드코딩 대신 permission snapshot 기준으로 동기화합니다.
+- 이 snapshot은 클라이언트가 세부 권한 UI를 구성할 때 사용할 수 있습니다. 현재 주요 화면은 동일한 role 규칙을 클라이언트에서도 적용하고, 최종 권한 판정은 항상 API가 수행합니다.
 
 ### Mission Owner Persistence (Phase-11)
 
@@ -324,6 +408,9 @@ npm run dev
   - `POST /api/members`에서 해당 provider 멤버 생성 차단
   - `POST /api/missions`에서 `use_mock=false` 실행 차단 (openai 기준)
 - 보안상 key 원문은 응답으로 반환하지 않고 masked 값만 제공합니다.
+- provider key는 DB 저장 전에 암호화됩니다. 운영 환경에서는 반드시 `BREMEN_KEY_ENCRYPTION_SECRET`을 별도로 설정하세요.
+  - 미설정 시 개발용 기본 secret으로 암호화되어 로컬 실행은 가능하지만 운영 보안 기준에는 맞지 않습니다.
+  - 기존 평문 키는 읽기 호환만 유지됩니다. 다시 등록하면 암호화 형식으로 저장됩니다.
 
 ## Evaluation Layer (P4)
 
@@ -344,6 +431,7 @@ npm run dev
 ## Memory Scope (P6)
 
 - 지원 스코프: `global`, `team`, `mission`, `member`, `ephemeral`
+- 메모리 레코드는 SQLite `memory_store`에 영속 저장되어 서버 재시작 후에도 조회됩니다.
 - 메모리 저장: `POST /api/memory/put`
 - 스코프 조회: `GET /api/memory/{scope}/{scope_id}`
 - 스코프 전송 필터: `POST /api/memory/filter-transfer`

@@ -8,12 +8,12 @@ const inter = Inter({ subsets: ["latin"] });
 
 export const metadata = {
   title: "Bremen - Workforce Runtime OS",
-  description: "팀원/팀 자산을 조합해 실행 조직을 설계하고 운영하세요"
+  description: "에이전트와 실행 그래프로 AI 작업 흐름을 설계하고 운영하세요"
 };
 
 function ShellFallback() {
   return (
-    <div className="flex flex-1 min-h-0 items-center justify-center bg-[#0A0A0A] text-sm text-gray-500">
+    <div className="app-root-bg flex flex-1 min-h-0 items-center justify-center text-sm text-gray-500">
       로딩 중…
     </div>
   );
@@ -23,7 +23,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="ko">
       <body
-        className={`${inter.className} flex min-h-screen flex-col bg-[#0A0A0A] text-white antialiased`}
+        className={`${inter.className} app-root-bg flex min-h-screen flex-col text-white antialiased`}
       >
         <Navigation />
         <Suspense fallback={<ShellFallback />}>

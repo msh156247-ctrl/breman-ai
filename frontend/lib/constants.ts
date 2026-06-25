@@ -21,6 +21,12 @@ export const API_PROVIDER_CONFIG: Record<
     bg: "rgba(249,115,22,0.1)",
     models: ["Claude 3.5 Sonnet", "Claude 3 Haiku"]
   },
+  gemini: {
+    label: "Google Gemini",
+    color: "#3B82F6",
+    bg: "rgba(59,130,246,0.1)",
+    models: ["Gemini 1.5 Pro", "Gemini Flash"]
+  },
   stability: {
     label: "Stability AI",
     color: "#8B5CF6",
@@ -32,6 +38,12 @@ export const API_PROVIDER_CONFIG: Record<
     color: "#3B82F6",
     bg: "rgba(59,130,246,0.1)",
     models: ["Gemini 1.5 Pro", "Gemini Flash"]
+  },
+  mock: {
+    label: "Mock",
+    color: "#9CA3AF",
+    bg: "rgba(156,163,175,0.1)",
+    models: ["mock-sim"]
   }
 };
 
