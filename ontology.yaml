@@ -15,6 +15,110 @@ actions:
   - Approve
   - Escalate
 
+units:
+  workflow:
+    name: Workflow
+    label: 실행 흐름
+    short_label: Flow
+    runtime_mapping: mission_task_graph
+    description: 미션을 실행 가능한 단계와 연결로 쪼개는 최상위 작업 단위입니다.
+    effect_summary: 목표를 바로 실행하지 않고 단계, 조건, 승인 지점으로 나누어 실패 위치와 다음 행동이 선명해집니다.
+    member_role: 워크플로우 설계자
+    data_contract: goal, steps, edges, routing policy
+    responsibility: 작업 목표를 실행 순서, 조건, 승인 지점으로 구조화합니다.
+    capabilities: [planning, workflow design, task decomposition]
+    success_metrics: [단계 누락률 감소, 재시도 지점 식별, 승인 대기 시간 단축]
+    setup_steps: [목표를 실행 단계로 분해, 단계 사이 입출력 계약 정의, 조건·승인·반복 지점 연결]
+    cost_guidance: 초기 설계 단계에는 저비용 모델을 쓰고, 고비용 모델은 승인이나 최종 산출 단계에만 배치합니다.
+    quality_guidance: 각 단계의 완료 조건을 명시하고, 검토 노드가 확인할 산출물 기준을 함께 둡니다.
+    default_category: 기획
+    accent: text-blue-200
+  agent_profile:
+    name: AgentProfile
+    label: 역할 프로필
+    short_label: Agent
+    runtime_mapping: member_profile
+    description: 재사용 가능한 역할 자산입니다. capability, 비용, 검증 메타를 가집니다.
+    effect_summary: 반복적으로 쓰는 역할을 Unit으로 고정해 모델, 비용, 책임 범위가 흔들리지 않게 만듭니다.
+    member_role: 전문 실행 에이전트
+    data_contract: capabilities, model, cost, reliability
+    responsibility: 특정 역할을 안정적으로 수행하고 재사용 가능한 실행 자산으로 남습니다.
+    capabilities: [domain skill, execution, artifact generation]
+    success_metrics: [역할 재사용률, 평균 성공률, 평균 비용]
+    setup_steps: [역할 책임 정의, 모델·Provider 선택, 입출력 예시와 실패 처리 기준 기록]
+    cost_guidance: 역할별 평균 비용을 저장하고, 단순 작업은 mock 또는 저비용 Provider로 시작합니다.
+    quality_guidance: 역할 설명보다 산출물 검수 기준과 실패 시 재시도 기준을 우선 적습니다.
+    default_category: 개발
+    accent: text-cyan-200
+  canvas_node:
+    name: CanvasNode
+    label: 실행 단계
+    short_label: Node
+    runtime_mapping: task
+    description: 워크플로우 안에 배치된 실행 유닛입니다. 그래프의 한 노드와 매핑됩니다.
+    effect_summary: 큰 작업을 작은 실행 카드로 쪼개 어느 노드가 무엇을 만들고 어디로 넘기는지 추적할 수 있습니다.
+    member_role: 노드 오퍼레이터
+    data_contract: input, output, node state, edge handles
+    responsibility: 한 단계의 입력과 출력을 명확히 만들고 다음 노드로 넘깁니다.
+    capabilities: [node execution, input/output mapping, state tracking]
+    success_metrics: [입출력 누락률, 노드 완료율, 상태 전이 정확도]
+    setup_steps: [노드 입력 선택, 산출물 형태 지정, 다음 노드 또는 종료 조건 연결]
+    cost_guidance: 노드별 비용을 분리해 비싼 노드가 반복 안에 들어가지 않도록 확인합니다.
+    quality_guidance: 각 노드에 기대 산출물과 다음 노드가 읽을 필드를 명확히 둡니다.
+    default_category: 개발
+    accent: text-emerald-200
+  role_binding:
+    name: RoleBinding
+    label: 역할 바인딩
+    short_label: Role
+    runtime_mapping: task_policy_and_human_gate
+    description: 권한, 책임, 감독 범위를 정의해 실행 책임의 경계를 만듭니다.
+    effect_summary: 자동 실행과 사람 승인 사이의 경계를 관리해 위험한 단계가 조용히 지나가지 않게 합니다.
+    member_role: 권한/품질 관리자
+    data_contract: permissions, approval scope, reviewer policy
+    responsibility: 자동 실행과 승인 후 실행의 경계를 정하고 품질 기준을 관리합니다.
+    capabilities: [approval policy, quality gate, permission design]
+    success_metrics: [승인 누락 0건, 검토 통과율, 권한 위반 차단]
+    setup_steps: [승인 대상 단계 선택, 승인 채널과 담당자 정의, 자동 실행 가능 조건 설정]
+    cost_guidance: 사람 승인은 중요한 전환점에만 배치하고, 단순 알림은 조건 노드로 분리합니다.
+    quality_guidance: 승인 기준을 문장으로 남기고, 실패 시 되돌아갈 노드를 함께 설정합니다.
+    default_category: 검토
+    accent: text-violet-200
+  mission_run:
+    name: MissionRun
+    label: 실행 인스턴스
+    short_label: Run
+    runtime_mapping: mission_store
+    description: 한 번의 미션 실행 단위입니다. 상태 머신과 이벤트 로그의 앵커입니다.
+    effect_summary: 실행 중 상태, 이벤트, 산출물을 한 곳에 묶어 장애와 품질 문제를 재현할 수 있게 합니다.
+    member_role: 런타임 관측자
+    data_contract: status, events, artifacts, retry history
+    responsibility: 실행 상태, 실패, 승인 대기, 재시도 흐름을 추적합니다.
+    capabilities: [runtime monitoring, event analysis, incident triage]
+    success_metrics: [실패 원인 식별 시간, 재시도 성공률, 이벤트 누락률]
+    setup_steps: [상태 전이 기준 정의, 필수 이벤트와 산출물 지정, 실패·재시도 처리 정책 연결]
+    cost_guidance: 재시도와 승인 대기 비용을 별도로 보아 반복 실패 노드를 빠르게 줄입니다.
+    quality_guidance: 완료, 실패, 대기 상태의 의미를 명확히 하고 이벤트 로그가 같은 언어를 쓰게 합니다.
+    default_category: 데이터
+    accent: text-amber-200
+  cost_ledger:
+    name: CostLedger
+    label: 비용 원장
+    short_label: Cost
+    runtime_mapping: ledger_store
+    description: 토큰, 재시도, 승인, 휴먼 비용이 수렴하는 실행 비용 원장입니다.
+    effect_summary: 비용을 사후 집계가 아니라 실행 설계의 일부로 다루어 품질 대비 과소비를 줄입니다.
+    member_role: 비용/효율 관리자
+    data_contract: token usage, retry cost, approval cost, quality score
+    responsibility: 비용 대비 품질을 추적하고 과소비 지점을 줄입니다.
+    capabilities: [cost analysis, ledger audit, quality/cost tradeoff]
+    success_metrics: [예산 초과율, 품질 대비 비용, 반복 비용 비중]
+    setup_steps: [비용 수집 필드 정의, 노드별 예산 한도 설정, 품질 점수와 비용을 함께 비교]
+    cost_guidance: 반복 영역과 승인 게이트의 비용을 따로 보며, 예산 초과 시 알림 분기를 둡니다.
+    quality_guidance: 비용 절감이 품질 하락으로 이어지는지 품질 점수와 함께 평가합니다.
+    default_category: 데이터
+    accent: text-rose-200
+
 roles:
   architect:
     can_read: [requirements, policy]

@@ -2,13 +2,19 @@
   "name": "bremen-web-frontend",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=18.17.0"
+  },
   "scripts": {
+    "ontology:generate": "node scripts/generate-ontology.cjs",
+    "predev": "npm run ontology:generate",
     "dev": "next dev",
+    "prebuild": "npm run ontology:generate",
     "build": "next build",
+    "test:flow": "node scripts/flow-builder-regression.cjs",
     "start": "next start"
   },
   "dependencies": {
-    "clsx": "^2.1.1",
     "framer-motion": "^12.38.0",
     "lucide-react": "^0.462.0",
     "next": "^14.2.18",
@@ -24,6 +30,7 @@
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "yaml": "^2.9.0"
   }
 }
