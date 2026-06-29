@@ -60,6 +60,33 @@ Environment:
 | Account A/B API smoke | Pass | Workspace isolation true |
 | Human Gate API smoke | Pass | Mission `8b68537d` reached approval, resumed, and completed |
 
+## Local E2E Rerun After API Split
+
+Date: 2026-06-29
+
+Environment:
+
+- Frontend: `http://127.0.0.1:3103`
+- API: `http://127.0.0.1:8100`
+- Auth: JWT-only
+- Runtime: isolated temporary database and decision log
+- Branch: `staging/e2e-readiness`
+
+| Scenario | Result | Evidence |
+| --- | --- | --- |
+| API health and security | Pass | `healthy`, `jwt_only`, encrypted key storage, indexed decision log |
+| Account A/B API smoke | Pass | Workspace isolation true |
+| Human Gate API smoke | Pass | Mission `e053d47b` reached approval, resumed, and completed |
+| Timeline consistency | Pass | `human_gate_requested`, `human_gate_approved`, `mission_completed` observed |
+| Studio QA bootstrap | Pass | `/qa/bootstrap` stored account A session and redirected to `/studio` |
+| Studio initial UI | Pass | Page title `Bremen - Workforce Runtime OS`, Studio/runtime CTA content present |
+| Studio console errors | Pass | No browser console warning/error after initial `/studio` load |
+
+Notes:
+
+- The E2E stack was stopped after the run and generated session files were deleted.
+- The full multi-page responsive browser sweep was attempted but the in-app browser automation timed out during Next dev page traversal, so it remains a manual check item.
+
 ## Remaining Manual Check
 
 The in-app Browser viewport capability retained a 1280px layout width while
