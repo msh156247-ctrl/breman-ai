@@ -4,6 +4,10 @@
 
 Deploy the repository root with `railway.toml`.
 
+Current staging API:
+
+- `https://api-production-39f0.up.railway.app`
+
 Required variables:
 
 - `BREMEN_ENV=staging`
@@ -29,6 +33,10 @@ Do not expose the administrator token to the frontend.
 
 Set the project root directory to `frontend`.
 
+Current staging frontend:
+
+- `https://breman-ai-staging.vercel.app`
+
 Required variables:
 
 - `NEXT_PUBLIC_BREMEN_API_BASE_URL=https://<railway-api-host>`
@@ -38,6 +46,12 @@ Required variables:
 
 Do not set `NEXT_PUBLIC_BREMEN_ADMIN_TOKEN` or
 `NEXT_PUBLIC_BREMEN_E2E_MODE` in staging.
+
+The frontend deploy uploads only `frontend/`. `frontend/.vercelignore`
+excludes local Next caches and logs, and
+`frontend/scripts/generate-ontology.cjs` reuses the checked-in
+`generated/ontology.json` when the repository-root `ontology.yaml` is not
+available in Vercel's frontend-only build context.
 
 ## QA Session
 

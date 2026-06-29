@@ -41,9 +41,27 @@ waits for the API snapshot before switching source mode.
 Ports 3003 and 3103 used the same Next build cache, which mixed demo/live
 environment chunks. The isolated stack now uses a run-specific `distDir`.
 
+## Staging Smoke
+
+Date: 2026-06-29
+
+Environment:
+
+- Frontend: `https://breman-ai-staging.vercel.app`
+- API: `https://api-production-39f0.up.railway.app`
+- Auth: JWT-only
+- Runtime: Railway persistent `/data/runtime`
+
+| Scenario | Result | Evidence |
+| --- | --- | --- |
+| Railway health | Pass | `healthy`, `jwt_only`, encrypted key storage, indexed decision log, warnings empty |
+| Fixed CORS origin | Pass | `Access-Control-Allow-Origin: https://breman-ai-staging.vercel.app` |
+| Vercel frontend | Pass | `200`, title `Bremen - Workforce Runtime OS` |
+| Account A/B API smoke | Pass | Workspace isolation true |
+| Human Gate API smoke | Pass | Mission `8b68537d` reached approval, resumed, and completed |
+
 ## Remaining Manual Check
 
 The in-app Browser viewport capability retained a 1280px layout width while
 requesting 663px and 627px. Those two widths still need one manual browser
-resize pass before production promotion. Staging deployment remains blocked
-until Railway GitHub authentication is completed.
+resize pass before production promotion.
