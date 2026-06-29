@@ -111,6 +111,15 @@ export function formatDraftTime(value: string): string {
   return Number.isFinite(parsed) ? new Date(parsed).toLocaleString() : value;
 }
 
+export function describeExecuteError(message: string): string {
+  if (message.includes(":401")) return "세션이 만료되었거나 인증이 필요합니다. 내 공간 > 세션에서 다시 발급해 주세요.";
+  if (message.includes(":403")) return "실행 권한 또는 provider API 키가 필요합니다. 내 공간 > API 키 관리를 확인해 주세요.";
+  if (message.includes("runtime_provider_not_supported")) return "선택한 provider는 아직 live 실행 엔진에 연결되지 않았습니다. Mock 실행을 사용하거나 OpenAI 노드로 바꿔 주세요.";
+  if (message.includes("mock_provider_requires_mock_runtime")) return "Mock provider 노드는 Mock 실행 모드에서만 실행할 수 있습니다.";
+  if (message.includes(":422")) return "미션 목표와 예산 값을 확인해 주세요.";
+  return "미션 실행에 실패했습니다. 잠시 후 다시 시도해 주세요.";
+}
+
 export function getNodeLabel(node: Node): string {
   return String((node.data as { label?: unknown } | undefined)?.label || node.id);
 }

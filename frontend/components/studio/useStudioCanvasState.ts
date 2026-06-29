@@ -1,0 +1,732 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { type Node } from "reactflow";
+import { useAppStore, type LoopRegion } from "../../stores/app.store";
+import { createMission, fetchApprovalChannelSettings, type ApprovalChannelId, type ApprovalChannelSettings } from "../../lib/api";
+import { isDemoModeEnabled } from "../../lib/demo-mode";
+import { buildConditionDslContract, buildWorkflowGraphPayload } from "../../lib/workflow-graph";
+import {
+  APPROVAL_CHANNEL_OPTIONS,
+  CANVAS_UTILITY_NODES,
+  describeExecuteError,
+  formatDraftTime,
+  getNodeLabel,
+  isConditionNode,
+  LIVE_RUNTIME_PROVIDERS,
+  LOOP_EXIT_FINISH,
+  normalizeConditionBranches,
+  orderFlowNodes,
+  readStudioDraft,
+  STUDIO_DRAFT_STORAGE_KEY,
+  studioApprovalChannelState,
+  type ApprovalSettingsLoadState,
+  type ConditionBranch,
+  type FlowModalTab,
+  type StudioApprovalChannelState,
+  type StudioDraft
+} from "./studio-canvas-model";
+
+export function useStudioCanvasState() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const flowModalReturnScrollYRef = useRef(0);
+  const [missionGoal, setMissionGoal] = useState("새로운 실행 워크플로우");
+  const [missionBudget, setMissionBudget] = useState("5");
+  const [useMockRuntime, setUseMockRuntime] = useState(true);
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [executeError, setExecuteError] = useState("");
+  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
+  const [draftNotice, setDraftNotice] = useState("");
+  const [approvalSettings, setApprovalSettings] = useState<ApprovalChannelSettings | null>(null);
+  const [approvalEnvOverrides, setApprovalEnvOverrides] = useState<Record<string, boolean>>({});
+  const [approvalSettingsState, setApprovalSettingsState] = useState<ApprovalSettingsLoadState>("idle");
+  const [showFlowModal, setShowFlowModal] = useState(() => searchParams.get("panel") === "flow");
+  const [flowModalTab, setFlowModalTab] = useState<FlowModalTab>("steps");
+  const [showAddPanel, setShowAddPanel] = useState(false);
+  const [linkTargetId, setLinkTargetId] = useState("");
+  const [selectedConditionNodeId, setSelectedConditionNodeId] = useState("");
+  const [loopBandMode, setLoopBandMode] = useState(false);
+  const [bandSelectedNodeIds, setBandSelectedNodeIds] = useState<string[]>([]);
+  const isDemoMode = isDemoModeEnabled();
+  const {
+    hiredAgents,
+    libraryAgents,
+    nodes,
+    edges,
+    connectNodes,
+    loopRegions,
+    selectedLoopRegionId,
+    createLoopRegion,
+    updateLoopRegion,
+    removeLoopRegion,
+    setSelectedLoopRegionId,
+    hireAgent,
+    addNodeFromAgent,
+    addUtilityNode,
+    updateNodeData,
+    selectedNodeId,
+    setSelectedNodeId,
+    clearCanvas,
+    missionRunState,
+    missionRunTransitionWarning,
+    clearMissionRunTransitionWarning,
+    setMissionRunState,
+    resetMissionRunState,
+    setNodeExecutionState,
+    nodeExecutionStates,
+    replaceCanvas
+  } = useAppStore();
+  const orderedFlowNodes = useMemo(() => orderFlowNodes(nodes, edges), [edges, nodes]);
+  const stepIndexByNodeId = useMemo(
+    () => new Map(orderedFlowNodes.map((node, index) => [node.id, index + 1])),
+    [orderedFlowNodes]
+  );
+  const selectLoopRegionForEdit = useCallback(
+    (regionId: string) => {
+      setSelectedLoopRegionId(regionId);
+      setSelectedNodeId(null);
+      setLoopBandMode(false);
+      setFlowModalTab("routes");
+    },
+    [setSelectedLoopRegionId, setSelectedNodeId]
+  );
+  const selectedNode = useMemo(
+    () => nodes.find((node) => node.id === selectedNodeId) || null,
+    [nodes, selectedNodeId]
+  );
+  const selectedNodeData = (selectedNode?.data as any) || {};
+  const selectedNodeLabel = selectedNode ? getNodeLabel(selectedNode) : "";
+  const selectedConditionMode = String(
+    selectedNodeData.condition_mode ||
+      (String(selectedNodeData.condition_expression || "").trim() ? "condition" : "always")
+  );
+  const selectedConditionDsl = useMemo(
+    () => buildConditionDslContract({ ...selectedNodeData, condition_mode: selectedConditionMode }),
+    [selectedConditionMode, selectedNodeData]
+  );
+  const selectedApprovalChannels: string[] = Array.isArray(selectedNodeData.approval_channels)
+    ? selectedNodeData.approval_channels
+    : selectedNodeData.execution_mode === "confirm"
+      ? ["admin_queue"]
+      : [];
+  const approvalChannelStates = useMemo(
+    () =>
+      Object.fromEntries(
+        APPROVAL_CHANNEL_OPTIONS.map((channel) => [
+          channel.id,
+          studioApprovalChannelState(channel.id, approvalSettings, approvalEnvOverrides, approvalSettingsState)
+        ])
+      ) as Record<ApprovalChannelId, StudioApprovalChannelState>,
+    [approvalEnvOverrides, approvalSettings, approvalSettingsState]
+  );
+  const selectedUnreadyApprovalChannels = useMemo(
+    () =>
+      selectedApprovalChannels
+        .map((channel) => channel as ApprovalChannelId)
+        .filter((channel) => channel !== "admin_queue" && approvalChannelStates[channel]?.tone === "warn"),
+    [approvalChannelStates, selectedApprovalChannels]
+  );
+  const linkableTargetNodes = useMemo(
+    () => nodes.filter((node) => node.id !== selectedNodeId),
+    [nodes, selectedNodeId]
+  );
+  const selectedLoopRegion = useMemo(
+    () => loopRegions.find((region) => region.id === selectedLoopRegionId) || loopRegions[0] || null,
+    [loopRegions, selectedLoopRegionId]
+  );
+  const bandSelectedNodes = useMemo(
+    () => bandSelectedNodeIds.map((nodeId) => nodes.find((node) => node.id === nodeId)).filter((node): node is Node => Boolean(node)),
+    [bandSelectedNodeIds, nodes]
+  );
+  const bandSelectedNodeIdSet = useMemo(() => new Set(bandSelectedNodeIds), [bandSelectedNodeIds]);
+  const bandSelectedEdges = useMemo(
+    () => edges.filter((edge) => bandSelectedNodeIdSet.has(edge.source) && bandSelectedNodeIdSet.has(edge.target)),
+    [bandSelectedNodeIdSet, edges]
+  );
+  const selectedLoopNodes = useMemo(
+    () =>
+      selectedLoopRegion
+        ? selectedLoopRegion.nodeIds
+            .map((nodeId) => nodes.find((node) => node.id === nodeId))
+            .filter((node): node is Node => Boolean(node))
+        : [],
+    [nodes, selectedLoopRegion]
+  );
+  const outsideLoopNodes = useMemo(
+    () => nodes.filter((node) => !selectedLoopRegion?.nodeIds.includes(node.id)),
+    [nodes, selectedLoopRegion]
+  );
+  const selectedLoopStartNode = useMemo(
+    () => (selectedLoopRegion ? nodes.find((node) => node.id === selectedLoopRegion.startNodeId) || null : null),
+    [nodes, selectedLoopRegion]
+  );
+  const selectedLoopEndNode = useMemo(
+    () => (selectedLoopRegion ? nodes.find((node) => node.id === selectedLoopRegion.endNodeId) || null : null),
+    [nodes, selectedLoopRegion]
+  );
+  const selectedLoopConditionNodeId =
+    selectedLoopRegion?.exitConditionNodeId || selectedLoopRegion?.endNodeId || selectedLoopRegion?.startNodeId || "";
+  const selectedLoopConditionNode = useMemo(
+    () => nodes.find((node) => node.id === selectedLoopConditionNodeId) || selectedLoopEndNode || selectedLoopStartNode,
+    [nodes, selectedLoopConditionNodeId, selectedLoopEndNode, selectedLoopStartNode]
+  );
+  const selectedLoopExitNode = useMemo(
+    () =>
+      selectedLoopRegion && selectedLoopRegion.exitNodeId !== LOOP_EXIT_FINISH
+        ? nodes.find((node) => node.id === selectedLoopRegion.exitNodeId) || null
+        : null,
+    [nodes, selectedLoopRegion]
+  );
+  const conditionNodes = useMemo(() => nodes.filter(isConditionNode), [nodes]);
+  const activeConditionNode = useMemo(() => {
+    if (selectedNode && isConditionNode(selectedNode)) return selectedNode;
+    return (
+      conditionNodes.find((node) => node.id === selectedConditionNodeId) ||
+      conditionNodes[0] ||
+      null
+    );
+  }, [conditionNodes, selectedConditionNodeId, selectedNode]);
+  const activeConditionData = (activeConditionNode?.data as any) || {};
+  const conditionBranches = useMemo(
+    () => normalizeConditionBranches(activeConditionData.condition_branches),
+    [activeConditionData.condition_branches]
+  );
+  const activeConditionDsl = useMemo(
+    () =>
+      buildConditionDslContract({
+        ...activeConditionData,
+        condition_mode: activeConditionData.condition_mode || "condition"
+      }),
+    [activeConditionData]
+  );
+  const conditionTargetNodes = useMemo(
+    () => nodes.filter((node) => node.id !== activeConditionNode?.id),
+    [activeConditionNode?.id, nodes]
+  );
+  const connectSourceId = selectedNodeId || orderedFlowNodes[orderedFlowNodes.length - 1]?.id;
+  const addContextLabel = selectedNode ? `${getNodeLabel(selectedNode)} 뒤에 연결` : nodes.length > 0 ? "마지막 노드 뒤에 연결" : "첫 노드로 추가";
+  const libraryOnlyAgents = useMemo(
+    () => libraryAgents.filter((agent) => !hiredAgents.some((hired) => hired.id === agent.id)).slice(0, 6),
+    [hiredAgents, libraryAgents]
+  );
+  const approvalGateCount = useMemo(
+    () =>
+      nodes.filter((node) => {
+        const data = (node.data as any) || {};
+        return data.execution_mode === "confirm" || String(data.agent_id || "").toLowerCase() === "hitl";
+      }).length,
+    [nodes]
+  );
+  const conditionRuleCount = useMemo(
+    () =>
+      nodes.filter((node) => {
+        const data = (node.data as any) || {};
+        return isConditionNode(node) || Boolean(data.condition_mode && data.condition_mode !== "always");
+      }).length,
+    [nodes]
+  );
+  const budgetNumber = Number(missionBudget);
+  const unsupportedLiveProviders = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          nodes
+            .filter((node) => {
+              const data = (node.data as Record<string, unknown>) || {};
+              const agentId = String(data.agent_id || "").toLowerCase();
+              return !["router", "hitl", "human_approval"].includes(agentId);
+            })
+            .map((node) => String((node.data as Record<string, unknown>)?.required_api || "openai").toLowerCase())
+            .filter((provider) => !LIVE_RUNTIME_PROVIDERS.has(provider))
+        )
+      ),
+    [nodes]
+  );
+  const runReadiness = useMemo(() => {
+    if (nodes.length === 0) return { label: "노드 필요", tone: "warn" as const };
+    if (!missionGoal.trim()) return { label: "목표 필요", tone: "warn" as const };
+    if (!Number.isFinite(budgetNumber) || budgetNumber <= 0) return { label: "예산 확인", tone: "warn" as const };
+    if (!useMockRuntime && unsupportedLiveProviders.length > 0) {
+      return {
+        label: `${unsupportedLiveProviders.join(", ")} 엔진 미지원`,
+        tone: "warn" as const
+      };
+    }
+    return { label: useMockRuntime ? "Mock 실행 준비" : "Live 실행 준비", tone: "ready" as const };
+  }, [budgetNumber, missionGoal, nodes.length, unsupportedLiveProviders, useMockRuntime]);
+
+  useEffect(() => {
+    setShowFlowModal(searchParams.get("panel") === "flow");
+  }, [searchParams]);
+
+  useEffect(() => {
+    const draft = readStudioDraft();
+    if (draft) setDraftSavedAt(draft.savedAt);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setApprovalSettingsState("loading");
+    fetchApprovalChannelSettings()
+      .then((response) => {
+        if (cancelled) return;
+        setApprovalSettings(response.settings);
+        setApprovalEnvOverrides(response.env_overrides || {});
+        setApprovalSettingsState("ready");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setApprovalSettings(null);
+        setApprovalEnvOverrides({});
+        setApprovalSettingsState("unavailable");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedNodeId) {
+      setLinkTargetId("");
+      return;
+    }
+    if (linkTargetId && linkableTargetNodes.some((node) => node.id === linkTargetId)) return;
+    setLinkTargetId(linkableTargetNodes[0]?.id || "");
+  }, [linkTargetId, linkableTargetNodes, selectedNodeId]);
+
+  useEffect(() => {
+    if (selectedNode && isConditionNode(selectedNode)) {
+      setSelectedConditionNodeId(selectedNode.id);
+      return;
+    }
+    if (selectedConditionNodeId && conditionNodes.some((node) => node.id === selectedConditionNodeId)) return;
+    setSelectedConditionNodeId(conditionNodes[0]?.id || "");
+  }, [conditionNodes, selectedConditionNodeId, selectedNode]);
+
+  useEffect(() => {
+    if (!selectedLoopRegionId) return;
+    if (loopRegions.some((region) => region.id === selectedLoopRegionId)) return;
+    setSelectedLoopRegionId(loopRegions[0]?.id || null);
+  }, [loopRegions, selectedLoopRegionId, setSelectedLoopRegionId]);
+
+  const openFlowModal = useCallback(() => {
+    flowModalReturnScrollYRef.current = window.scrollY;
+    setFlowModalTab("steps");
+    setShowFlowModal(true);
+    const params = new URLSearchParams(window.location.search);
+    params.set("panel", "flow");
+    window.history.replaceState(null, "", `/studio?${params.toString()}`);
+  }, []);
+
+  const closeFlowModal = useCallback(() => {
+    setShowFlowModal(false);
+    const params = new URLSearchParams(window.location.search);
+    params.delete("panel");
+    const query = params.toString();
+    window.history.replaceState(null, "", query ? `/studio?${query}` : "/studio");
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: flowModalReturnScrollYRef.current, left: 0, behavior: "auto" });
+    });
+  }, []);
+
+  const getAutoAddPosition = useCallback(() => {
+    const source = selectedNode || orderedFlowNodes[orderedFlowNodes.length - 1] || null;
+    if (!source) return { x: 80, y: 160 };
+    return { x: source.position.x + 320, y: source.position.y };
+  }, [orderedFlowNodes, selectedNode]);
+
+  const appendAgentToFlow = useCallback(
+    (agent: (typeof hiredAgents)[number]) => {
+      hireAgent(agent);
+      addNodeFromAgent(agent, getAutoAddPosition(), {
+        connectFromId: nodes.length > 0 ? connectSourceId : undefined
+      });
+      setShowAddPanel(false);
+    },
+    [addNodeFromAgent, connectSourceId, getAutoAddPosition, hireAgent, nodes.length]
+  );
+
+  const appendUtilityToFlow = useCallback(
+    (utility: (typeof CANVAS_UTILITY_NODES)[number]) => {
+      addUtilityNode(utility, getAutoAddPosition(), {
+        connectFromId: nodes.length > 0 ? connectSourceId : undefined
+      });
+      setShowAddPanel(false);
+    },
+    [addUtilityNode, connectSourceId, getAutoAddPosition, nodes.length]
+  );
+
+  const connectSelectedToTarget = useCallback(() => {
+    if (!selectedNodeId || !linkTargetId) return;
+    connectNodes(selectedNodeId, linkTargetId, {
+      condition: String(selectedNodeData.condition_expression || ""),
+      animated: true
+    });
+  }, [connectNodes, linkTargetId, selectedNodeData.condition_expression, selectedNodeId]);
+
+  const updateSelectedNodeData = useCallback(
+    (data: Record<string, unknown>) => {
+      if (!selectedNodeId) return;
+      updateNodeData(selectedNodeId, data);
+    },
+    [selectedNodeId, updateNodeData]
+  );
+
+  const updateSelectedConditionMode = useCallback(
+    (mode: string) => {
+      updateSelectedNodeData({
+        condition_mode: mode,
+        condition_expression:
+          mode === "always"
+            ? ""
+            : mode === "composite"
+              ? String(selectedNodeData.condition_expression || "time.in_window == true && payload.status == 'ready'")
+              : mode === "condition"
+                ? String(selectedNodeData.condition_expression || "risk_score > 0.7")
+                : String(selectedNodeData.condition_expression || "")
+      });
+    },
+    [selectedNodeData.condition_expression, updateSelectedNodeData]
+  );
+
+  const toggleSelectedApprovalChannel = useCallback(
+    (channelId: string) => {
+      const active = selectedApprovalChannels.includes(channelId);
+      const channelState = approvalChannelStates[channelId as ApprovalChannelId];
+      const canEnable = channelId === "admin_queue" || channelState?.tone === "ready";
+      if (!active && !canEnable) return;
+
+      const nextChannels = active
+        ? selectedApprovalChannels.filter((id) => id !== channelId)
+        : [...selectedApprovalChannels, channelId];
+      updateSelectedNodeData({ approval_channels: nextChannels.length > 0 ? nextChannels : ["admin_queue"] });
+    },
+    [approvalChannelStates, selectedApprovalChannels, updateSelectedNodeData]
+  );
+
+  const toggleLoopBandNode = useCallback(
+    (nodeId: string) => {
+      setBandSelectedNodeIds((selectedIds) =>
+        selectedIds.includes(nodeId) ? selectedIds.filter((id) => id !== nodeId) : [...selectedIds, nodeId]
+      );
+      setSelectedNodeId(nodeId);
+    },
+    [setSelectedNodeId]
+  );
+
+  const createLoopRegionFromBand = useCallback(() => {
+    const selectedIds = Array.from(new Set(bandSelectedNodeIds)).filter((nodeId) => nodes.some((node) => node.id === nodeId));
+    if (selectedIds.length < 2) return;
+    const selectedSet = new Set(selectedIds);
+    const orderedSelectedNodes = orderedFlowNodes.filter((node) => selectedSet.has(node.id));
+    const selectedNodes = orderedSelectedNodes.length > 0 ? orderedSelectedNodes : nodes.filter((node) => selectedSet.has(node.id));
+    const internalEdges = edges.filter((edge) => selectedSet.has(edge.source) && selectedSet.has(edge.target));
+    const incomingIds = new Set(internalEdges.map((edge) => edge.target));
+    const outgoingIds = new Set(internalEdges.map((edge) => edge.source));
+    const startNode = selectedNodes.find((node) => !incomingIds.has(node.id)) || selectedNodes[0];
+    const endNode =
+      [...selectedNodes].reverse().find((node) => !outgoingIds.has(node.id)) || selectedNodes[selectedNodes.length - 1];
+    const exitEdge =
+      edges.find((edge) => edge.source === endNode.id && !selectedSet.has(edge.target)) ||
+      edges.find((edge) => selectedSet.has(edge.source) && !selectedSet.has(edge.target));
+    createLoopRegion({
+      name: `반복 영역 ${loopRegions.length + 1}`,
+      nodeIds: selectedIds,
+      startNodeId: startNode.id,
+      endNodeId: endNode.id,
+      exitNodeId: exitEdge?.target || LOOP_EXIT_FINISH,
+      exitConditionNodeId: endNode.id,
+      repeatCount: 3,
+      exitCondition: "result.done == true"
+    });
+    setSelectedNodeId(startNode.id);
+    setBandSelectedNodeIds([]);
+    setLoopBandMode(false);
+    setFlowModalTab("routes");
+  }, [bandSelectedNodeIds, createLoopRegion, edges, loopRegions.length, nodes, orderedFlowNodes, setSelectedNodeId]);
+
+  const updateSelectedLoopRegion = useCallback(
+    (patch: Partial<Omit<LoopRegion, "id" | "createdAt">>) => {
+      if (!selectedLoopRegion) return;
+      updateLoopRegion(selectedLoopRegion.id, patch);
+    },
+    [selectedLoopRegion, updateLoopRegion]
+  );
+
+  const updateConditionNodeData = useCallback(
+    (patch: Record<string, unknown>) => {
+      if (!activeConditionNode) return;
+      updateNodeData(activeConditionNode.id, patch);
+    },
+    [activeConditionNode, updateNodeData]
+  );
+
+  const setConditionBranches = useCallback(
+    (branches: ConditionBranch[]) => {
+      updateConditionNodeData({ condition_branches: branches });
+    },
+    [updateConditionNodeData]
+  );
+
+  const addConditionNode = useCallback(() => {
+    const conditionUtility = CANVAS_UTILITY_NODES.find((item) => item.kind === "router");
+    if (!conditionUtility) return;
+    appendUtilityToFlow(conditionUtility);
+    setFlowModalTab("conditions");
+  }, [appendUtilityToFlow]);
+
+  const addConditionBranch = useCallback(() => {
+    const nextTarget =
+      conditionTargetNodes.find((node) => node.id !== activeConditionNode?.id)?.id || LOOP_EXIT_FINISH;
+    setConditionBranches([
+      ...conditionBranches,
+      {
+        id: `branch-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+        label: `분기 ${conditionBranches.length + 1}`,
+        expression: conditionBranches.length === 0 ? "result.ok == true" : "else",
+        action: nextTarget === LOOP_EXIT_FINISH ? "end" : "node",
+        targetNodeId: nextTarget === LOOP_EXIT_FINISH ? "" : nextTarget,
+        notifyMessage: ""
+      }
+    ]);
+  }, [activeConditionNode?.id, conditionBranches, conditionTargetNodes, setConditionBranches]);
+
+  const updateConditionBranch = useCallback(
+    (branchId: string, patch: Partial<ConditionBranch>) => {
+      setConditionBranches(
+        conditionBranches.map((branch) =>
+          branch.id === branchId
+            ? {
+                ...branch,
+                ...patch,
+                targetNodeId: patch.action && patch.action !== "node" ? "" : patch.targetNodeId ?? branch.targetNodeId
+              }
+            : branch
+        )
+      );
+    },
+    [conditionBranches, setConditionBranches]
+  );
+
+  const removeConditionBranch = useCallback(
+    (branchId: string) => {
+      setConditionBranches(conditionBranches.filter((branch) => branch.id !== branchId));
+    },
+    [conditionBranches, setConditionBranches]
+  );
+
+  const applyConditionBranchConnection = useCallback(
+    (branch: ConditionBranch) => {
+      if (!activeConditionNode || branch.action !== "node" || !branch.targetNodeId) return;
+      connectNodes(activeConditionNode.id, branch.targetNodeId, {
+        label: branch.label,
+        condition: branch.expression,
+        animated: true
+      });
+    },
+    [activeConditionNode, connectNodes]
+  );
+
+  const handleSaveDraft = () => {
+    if (typeof window === "undefined") return;
+    const savedAt = new Date().toISOString();
+    const draft: StudioDraft = {
+      version: 1,
+      savedAt,
+      missionGoal,
+      missionBudget,
+      useMockRuntime,
+      viewMode: "execution",
+      nodes,
+      edges,
+      nodeExecutionStates,
+      loopRegions,
+      workflowGraph: buildWorkflowGraphPayload(nodes, edges, loopRegions)
+    };
+    try {
+      window.localStorage.setItem(STUDIO_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+      setDraftSavedAt(savedAt);
+      setDraftNotice(`Draft 저장됨 · ${formatDraftTime(savedAt)}`);
+    } catch {
+      setDraftNotice("브라우저 저장소를 사용할 수 없어 draft를 저장하지 못했습니다.");
+    }
+  };
+
+  const handleRestoreDraft = () => {
+    const draft = readStudioDraft();
+    if (!draft) {
+      setDraftSavedAt(null);
+      setDraftNotice("복구할 draft가 없습니다.");
+      return;
+    }
+    replaceCanvas({
+      nodes: draft.nodes,
+      edges: draft.edges,
+      nodeExecutionStates: draft.nodeExecutionStates,
+      loopRegions: draft.loopRegions || []
+    });
+    setMissionGoal(draft.missionGoal);
+    setMissionBudget(draft.missionBudget);
+    setUseMockRuntime(draft.useMockRuntime);
+    setDraftSavedAt(draft.savedAt);
+    setDraftNotice(`Draft 복구됨 · ${formatDraftTime(draft.savedAt)}`);
+  };
+
+  const handleDiscardDraft = () => {
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.removeItem(STUDIO_DRAFT_STORAGE_KEY);
+      } catch {
+        setDraftNotice("브라우저 저장소를 사용할 수 없어 draft를 삭제하지 못했습니다.");
+        return;
+      }
+    }
+    setDraftSavedAt(null);
+    setDraftNotice("저장된 draft를 삭제했습니다.");
+  };
+
+  const handleClearCanvas = () => {
+    clearCanvas();
+    setDraftNotice(draftSavedAt ? "워크플로우를 비웠습니다. 저장된 draft는 유지됩니다." : "");
+  };
+
+  const handleExecute = async () => {
+    if (nodes.length === 0) {
+      setExecuteError("먼저 에이전트를 워크플로우에 추가해주세요.");
+      return;
+    }
+    const goal = missionGoal.trim();
+    const budget = Number(missionBudget);
+    if (!goal) {
+      setExecuteError("미션 목표를 입력해 주세요.");
+      return;
+    }
+    if (!Number.isFinite(budget) || budget <= 0) {
+      setExecuteError("예산은 0보다 큰 숫자로 입력해 주세요.");
+      return;
+    }
+    if (isExecuting) return;
+    setIsExecuting(true);
+    setExecuteError("");
+    resetMissionRunState("planning", "studio.execute.start");
+    nodes.forEach((node, idx) => setNodeExecutionState(node.id, idx === 0 ? "running" : "idle"));
+    if (isDemoMode) {
+      setMissionRunState("running", "studio.execute.demo");
+      const fakeMissionId = `demo-${Date.now()}`;
+      router.push(`/chat/${fakeMissionId}`);
+      setIsExecuting(false);
+      return;
+    }
+
+    try {
+      setMissionRunState("running", "studio.execute.api");
+      const data = await createMission({
+        goal,
+        budget,
+        workflowLabel: goal,
+        workflowGraph: buildWorkflowGraphPayload(nodes, edges, loopRegions),
+        autoMode: true,
+        useMock: useMockRuntime
+      });
+      router.push(`/chat/${data.mission_id}`);
+    } catch (error) {
+      setMissionRunState("failed", "studio.execute.error");
+      const message = error instanceof Error ? error.message : "";
+      setExecuteError(describeExecuteError(message));
+    } finally {
+      setIsExecuting(false);
+    }
+  };
+
+  return {
+    missionGoal,
+    setMissionGoal,
+    missionBudget,
+    setMissionBudget,
+    useMockRuntime,
+    setUseMockRuntime,
+    isExecuting,
+    executeError,
+    draftSavedAt,
+    draftNotice,
+    showFlowModal,
+    flowModalTab,
+    setFlowModalTab,
+    showAddPanel,
+    setShowAddPanel,
+    linkTargetId,
+    setLinkTargetId,
+    loopBandMode,
+    setLoopBandMode,
+    setBandSelectedNodeIds,
+    addContextLabel,
+    isDemoMode,
+    hiredAgents,
+    nodes,
+    edges,
+    loopRegions,
+    setSelectedLoopRegionId,
+    removeLoopRegion,
+    selectedNodeId,
+    setSelectedNodeId,
+    missionRunTransitionWarning,
+    clearMissionRunTransitionWarning,
+    nodeExecutionStates,
+    orderedFlowNodes,
+    stepIndexByNodeId,
+    selectLoopRegionForEdit,
+    selectedNode,
+    selectedNodeData,
+    selectedNodeLabel,
+    selectedConditionMode,
+    selectedConditionDsl,
+    selectedApprovalChannels,
+    approvalChannelStates,
+    selectedUnreadyApprovalChannels,
+    linkableTargetNodes,
+    selectedLoopRegion,
+    bandSelectedNodes,
+    bandSelectedNodeIdSet,
+    bandSelectedEdges,
+    selectedLoopNodes,
+    outsideLoopNodes,
+    selectedLoopStartNode,
+    selectedLoopEndNode,
+    selectedLoopConditionNodeId,
+    selectedLoopConditionNode,
+    selectedLoopExitNode,
+    conditionNodes,
+    activeConditionNode,
+    setSelectedConditionNodeId,
+    activeConditionData,
+    conditionBranches,
+    activeConditionDsl,
+    conditionTargetNodes,
+    libraryOnlyAgents,
+    approvalGateCount,
+    conditionRuleCount,
+    runReadiness,
+    openFlowModal,
+    closeFlowModal,
+    appendAgentToFlow,
+    appendUtilityToFlow,
+    connectSelectedToTarget,
+    updateSelectedNodeData,
+    updateSelectedConditionMode,
+    toggleSelectedApprovalChannel,
+    toggleLoopBandNode,
+    createLoopRegionFromBand,
+    updateSelectedLoopRegion,
+    updateConditionNodeData,
+    addConditionNode,
+    addConditionBranch,
+    updateConditionBranch,
+    removeConditionBranch,
+    applyConditionBranchConnection,
+    handleSaveDraft,
+    handleRestoreDraft,
+    handleDiscardDraft,
+    handleClearCanvas,
+    handleExecute
+  };
+}
