@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
 from datetime import datetime, timezone
 from email.message import EmailMessage
 import ipaddress
@@ -12,7 +11,6 @@ import os
 import socket
 import smtplib
 import ssl
-import threading
 import time
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -27,6 +25,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 
+from api.auth_runtime import (
+    ALLOWED_ROLES,
+    auth_migration_stats,
+    auth_migration_stats_lock,
+    request_identity_source_ctx,
+    resolve_jwt_identity_middleware,
+    _auth_mode_name,
+    _build_jwt_payload,
+    _is_jwt_only_mode,
+    _is_truthy,
+    _require_roles,
+    _resolve_identity,
+    _resolve_ws_identity,
+)
 from api.compat import legacy_api_metadata, mission_workflow_compatibility_fields
 from api.schemas import (
     ApiKeyRegisterRequest,
@@ -49,16 +61,9 @@ from api.schemas import (
 )
 from api.security import (
     ADMIN_TOKEN_ENV,
-    AUTH_JWT_ONLY_ENV,
     DEFAULT_JWT_SECRET,
     JWT_ALGORITHM,
-    JWT_AUDIENCE_ENV,
-    JWT_ISSUER_ENV,
     JWT_SECRET_ENV,
-    auth_mode_name,
-    build_jwt_payload,
-    is_jwt_only_mode,
-    is_truthy,
     key_storage_mode,
     security_configuration_issues,
     validate_production_security,
@@ -257,19 +262,6 @@ SMTP_PASSWORD_ENV = "BREMEN_SMTP_PASSWORD"
 SMTP_FROM_ENV = "BREMEN_SMTP_FROM"
 SMTP_USE_SSL_ENV = "BREMEN_SMTP_USE_SSL"
 APPROVAL_EXTERNAL_CHANNEL_IDS = ("email", "sms", "kakao")
-ALLOWED_ROLES = {"owner", "admin", "supervisor", "member", "viewer"}
-request_identity_ctx: ContextVar[Dict[str, str] | None] = ContextVar("request_identity_ctx", default=None)
-request_identity_source_ctx: ContextVar[str] = ContextVar("request_identity_source_ctx", default="header")
-request_auth_error_ctx: ContextVar[str | None] = ContextVar("request_auth_error_ctx", default=None)
-request_had_bearer_ctx: ContextVar[bool] = ContextVar("request_had_bearer_ctx", default=False)
-auth_migration_stats: Dict[str, int] = {
-    "total_requests": 0,
-    "jwt_authenticated": 0,
-    "header_fallback": 0,
-    "jwt_errors": 0,
-    "jwt_required_errors": 0,
-}
-auth_migration_stats_lock = threading.Lock()
 
 init_db()
 for _mission in list_mission_records():
@@ -313,95 +305,13 @@ for _mission in list_mission_records():
     missions[_mission_id] = _mission
 
 
-def _is_truthy(value: str | None) -> bool:
-    return is_truthy(value)
-
-
-def _is_jwt_only_mode() -> bool:
-    return is_jwt_only_mode()
-
-
-def _auth_mode_name() -> str:
-    return auth_mode_name()
-
-
 def _key_storage_mode() -> str:
     return key_storage_mode()
 
 
-def _build_jwt_payload(user_id: str, role: str, ttl_seconds: int) -> Dict[str, Any]:
-    return build_jwt_payload(user_id, role, ttl_seconds)
-
-
 @app.middleware("http")
 async def resolve_jwt_identity(request: Request, call_next):
-    token_identity: Dict[str, str] | None = None
-    identity_source = "header"
-    auth_error: str | None = None
-    jwt_only = _is_jwt_only_mode()
-    auth_header = request.headers.get("authorization", "")
-    had_bearer = auth_header.lower().startswith("bearer ")
-    if auth_header.lower().startswith("bearer "):
-        raw_token = auth_header[7:].strip()
-        if raw_token:
-            try:
-                decode_kwargs: Dict[str, Any] = {
-                    "algorithms": [JWT_ALGORITHM],
-                    "options": {"require": ["exp"]},
-                }
-                issuer = (os.getenv(JWT_ISSUER_ENV) or "").strip()
-                audience = (os.getenv(JWT_AUDIENCE_ENV) or "").strip()
-                if issuer:
-                    decode_kwargs["issuer"] = issuer
-                if audience:
-                    decode_kwargs["audience"] = audience
-                payload = jwt.decode(
-                    raw_token,
-                    os.getenv(JWT_SECRET_ENV, DEFAULT_JWT_SECRET),
-                    **decode_kwargs,
-                )
-                user_id = str(payload.get("sub") or payload.get("user_id") or "").strip()
-                role = str(payload.get("role") or "").strip().lower()
-                if user_id and role in ALLOWED_ROLES:
-                    token_identity = {"user_id": user_id, "role": role}
-                    identity_source = "jwt"
-                else:
-                    auth_error = "jwt_invalid_identity_claims"
-            except Exception:
-                token_identity = None
-                identity_source = "header"
-                auth_error = "jwt_invalid_or_expired"
-    elif jwt_only:
-        auth_error = "jwt_required"
-
-    if jwt_only and token_identity is None and auth_error is None:
-        auth_error = "jwt_required"
-    token = request_identity_ctx.set(token_identity)
-    source_token = request_identity_source_ctx.set(identity_source)
-    err_token = request_auth_error_ctx.set(auth_error)
-    bearer_token = request_had_bearer_ctx.set(had_bearer)
-    try:
-        response = await call_next(request)
-        with auth_migration_stats_lock:
-            auth_migration_stats["total_requests"] += 1
-            if identity_source == "jwt" and token_identity is not None:
-                auth_migration_stats["jwt_authenticated"] += 1
-            else:
-                auth_migration_stats["header_fallback"] += 1
-            if auth_error:
-                auth_migration_stats["jwt_errors"] += 1
-                if auth_error == "jwt_required":
-                    auth_migration_stats["jwt_required_errors"] += 1
-        response.headers["X-Auth-Mode"] = _auth_mode_name()
-        response.headers["X-Auth-Source"] = identity_source
-        if auth_error:
-            response.headers["X-Auth-Error"] = auth_error
-        return response
-    finally:
-        request_identity_ctx.reset(token)
-        request_identity_source_ctx.reset(source_token)
-        request_auth_error_ctx.reset(err_token)
-        request_had_bearer_ctx.reset(bearer_token)
+    return await resolve_jwt_identity_middleware(request, call_next)
 
 
 def _resolve_team_member(team_id: str, member_id: str) -> Dict[str, Any] | None:
@@ -476,29 +386,6 @@ def _require_admin_token_or_jwt_owner(
     ):
         return
     _require_admin(x_admin_token)
-
-
-def _resolve_identity(x_user_id: str | None, x_user_role: str | None) -> Dict[str, str]:
-    token_identity = request_identity_ctx.get()
-    if token_identity is not None:
-        return token_identity
-    # Fail-closed: if bearer token was provided but invalid, never fallback to header identity.
-    if request_had_bearer_ctx.get() and request_auth_error_ctx.get():
-        raise HTTPException(status_code=401, detail=request_auth_error_ctx.get() or "jwt_invalid_or_expired")
-    if _is_jwt_only_mode():
-        raise HTTPException(status_code=401, detail=request_auth_error_ctx.get() or "jwt_required")
-    user_id = (x_user_id or "").strip()
-    role = (x_user_role or "").strip().lower()
-    if role not in ALLOWED_ROLES:
-        role = "viewer"
-    if not user_id:
-        user_id = "system"
-    return {"user_id": user_id, "role": role}
-
-
-def _require_roles(identity: Dict[str, str], allowed_roles: set[str]) -> None:
-    if identity.get("role", "viewer") not in allowed_roles:
-        raise HTTPException(status_code=403, detail=f"role_not_allowed:{identity.get('role')}")
 
 
 def _can_manage_team(identity: Dict[str, str], team: Dict[str, Any]) -> bool:
@@ -1110,50 +997,6 @@ def _recovered_pending_gate_from_log(mission_id: str, mission: Dict[str, Any]) -
         "can_approve": False,
         "recovery_reason": "mission_snapshot_waiting_input",
     }
-
-
-def _decode_jwt_identity(raw_token: str) -> Dict[str, str] | None:
-    token = raw_token.strip()
-    if not token:
-        return None
-    try:
-        decode_kwargs: Dict[str, Any] = {
-            "algorithms": [JWT_ALGORITHM],
-            "options": {"require": ["exp"]},
-        }
-        issuer = (os.getenv(JWT_ISSUER_ENV) or "").strip()
-        audience = (os.getenv(JWT_AUDIENCE_ENV) or "").strip()
-        if issuer:
-            decode_kwargs["issuer"] = issuer
-        if audience:
-            decode_kwargs["audience"] = audience
-        payload = jwt.decode(
-            token,
-            os.getenv(JWT_SECRET_ENV, DEFAULT_JWT_SECRET),
-            **decode_kwargs,
-        )
-        user_id = str(payload.get("sub") or payload.get("user_id") or "").strip()
-        role = str(payload.get("role") or "").strip().lower()
-        if user_id and role in ALLOWED_ROLES:
-            return {"user_id": user_id, "role": role}
-    except Exception:
-        return None
-    return None
-
-
-def _resolve_ws_identity(websocket: WebSocket) -> Dict[str, str]:
-    raw_jwt = websocket.query_params.get("jwt")
-    if raw_jwt is not None:
-        token_identity = _decode_jwt_identity(raw_jwt)
-        if token_identity is None:
-            raise HTTPException(status_code=401, detail="jwt_invalid_or_expired")
-        return token_identity
-    if _is_jwt_only_mode():
-        raise HTTPException(status_code=401, detail="jwt_required")
-    return _resolve_identity(
-        websocket.query_params.get("user_id"),
-        websocket.query_params.get("user_role"),
-    )
 
 
 def _extract_request_meta(request: Request) -> Dict[str, Any]:

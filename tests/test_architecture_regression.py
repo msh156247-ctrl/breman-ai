@@ -257,3 +257,13 @@ def test_generated_frontend_ontology_matches_yaml_source() -> None:
     assert generated["generated_from"] == "../ontology.yaml"
     assert generated["version"] == str(source["version"])
     assert generated["units"] == source["units"]
+
+
+def test_auth_runtime_is_split_from_api_server() -> None:
+    server_source = (ROOT_DIR / "api" / "server.py").read_text(encoding="utf-8")
+    auth_runtime_source = (ROOT_DIR / "api" / "auth_runtime.py").read_text(encoding="utf-8")
+
+    assert "from api.auth_runtime import" in server_source
+    assert "async def resolve_jwt_identity_middleware" in auth_runtime_source
+    assert "def _resolve_identity" in auth_runtime_source
+    assert "def _resolve_identity" not in server_source
