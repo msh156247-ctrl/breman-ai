@@ -2312,6 +2312,45 @@ def test_auth_token_endpoint_requires_admin_and_valid_role() -> None:
     assert invalid_role.json()["detail"] == "invalid_role:root"
 
 
+def test_db_ops_require_admin_and_create_sanitized_backup() -> None:
+    missing_admin = client.get("/api/admin/db/integrity", headers=_headers("db-owner", "owner"))
+    assert missing_admin.status_code == 403
+    assert missing_admin.json()["detail"] == "admin_token_required"
+
+    viewer = client.get(
+        "/api/admin/db/integrity",
+        headers={**_headers("db-viewer", "viewer"), "X-Admin-Token": "bremen-admin-dev"},
+    )
+    assert viewer.status_code == 403
+    assert viewer.json()["detail"] == "role_not_allowed:viewer"
+
+    headers = {**_headers("db-owner", "owner"), "X-Admin-Token": "bremen-admin-dev"}
+    integrity = client.get("/api/admin/db/integrity", headers=headers)
+    assert integrity.status_code == 200
+    integrity_body = integrity.json()
+    assert isinstance(integrity_body["ok"], bool)
+    assert "db_file" in integrity_body
+    assert {"members", "teams", "channels", "contracts", "ledger_rows"}.issubset(integrity_body["counts"])
+    assert {
+        "orphan_team_members",
+        "orphan_channels",
+        "orphan_contracts",
+        "orphan_ledger_receivers",
+    }.issubset(integrity_body["issues"])
+
+    backup = client.post("/api/admin/db/backup?label=qa_label-2026!!", headers=headers)
+    assert backup.status_code == 200
+    backup_body = backup.json()
+    assert backup_body["ok"] is True
+    assert Path(backup_body["source"]).resolve() == Path(integrity_body["db_file"]).resolve()
+    assert backup_body["size_bytes"] > 0
+    backup_path = Path(backup_body["backup"])
+    assert backup_path.exists()
+    assert backup_path.parent.name == "backups"
+    assert backup_path.name.endswith("-qa_label-2026.db")
+    assert "!" not in backup_path.name
+
+
 def test_jwt_only_mode_blocks_header_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BREMEN_AUTH_JWT_ONLY", "1")
     try:
