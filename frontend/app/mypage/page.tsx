@@ -122,13 +122,13 @@ function MyPageInner() {
       userId: identity.userId,
       role: identity.role,
       ttlSeconds: "3600",
-      adminToken: process.env.NEXT_PUBLIC_BREMEN_ADMIN_TOKEN || ""
+      adminToken: ""
     };
   });
   const [keyForm, setKeyForm] = useState<{ provider: KeyProvider; apiKey: string; adminToken: string }>(() => ({
     provider: "openai",
     apiKey: "",
-    adminToken: process.env.NEXT_PUBLIC_BREMEN_ADMIN_TOKEN || ""
+    adminToken: ""
   }));
   const [keyBusy, setKeyBusy] = useState("");
   const [keyNotice, setKeyNotice] = useState("");
@@ -260,7 +260,9 @@ function MyPageInner() {
   const sessionExpiry = session.expiresAt ? new Date(session.expiresAt).toLocaleString("ko-KR") : "헤더 세션";
 
   const describeKeyError = (message: string) => {
-    if (message.includes(":403")) return "관리자 토큰 또는 owner/admin 권한이 필요합니다.";
+    if (message.includes(":403")) {
+      return jwtOnlyMode ? "owner/admin JWT 권한이 필요합니다." : "관리자 토큰 또는 owner/admin 권한이 필요합니다.";
+    }
     if (message.includes(":400")) return "provider 또는 API 키 형식을 확인하세요. 키는 최소 10자 이상이어야 합니다.";
     return "API 키 작업에 실패했습니다.";
   };
@@ -304,7 +306,7 @@ function MyPageInner() {
       await registerProviderKey({
         provider: keyForm.provider,
         apiKey: keyForm.apiKey.trim(),
-        adminToken: keyForm.adminToken
+        adminToken: jwtOnlyMode ? "" : keyForm.adminToken
       });
       setKeys(await fetchKeyStatuses());
       setKeyDataMode("live");
@@ -328,7 +330,7 @@ function MyPageInner() {
     setKeyError("");
     setKeyNotice("");
     try {
-      await deleteProviderKey({ provider, adminToken: keyForm.adminToken });
+      await deleteProviderKey({ provider, adminToken: jwtOnlyMode ? "" : keyForm.adminToken });
       setKeys(await fetchKeyStatuses());
       setKeyDataMode("live");
       setKeyNotice(`${API_PROVIDER_CONFIG[provider].label} 키 연결을 해제했습니다.`);

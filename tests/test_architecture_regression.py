@@ -180,6 +180,23 @@ def test_staging_uses_production_security_guard(monkeypatch: pytest.MonkeyPatch)
         validate_production_security()
 
 
+def test_frontend_does_not_reference_public_admin_token_env() -> None:
+    forbidden = "NEXT_PUBLIC_BREMEN_ADMIN_TOKEN"
+    ignored_dirs = {"node_modules", ".next", "out", "dist"}
+    checked_suffixes = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"}
+    offenders: list[str] = []
+
+    for path in (ROOT_DIR / "frontend").rglob("*"):
+        if not path.is_file() or path.suffix not in checked_suffixes:
+            continue
+        if ignored_dirs.intersection(path.parts) or any(part.startswith(".next") for part in path.parts):
+            continue
+        if forbidden in path.read_text(encoding="utf-8", errors="ignore"):
+            offenders.append(str(path.relative_to(ROOT_DIR)))
+
+    assert offenders == []
+
+
 def test_decision_log_rotates_and_keeps_indexed_mission_queries(tmp_path: Path) -> None:
     log = DecisionLog(tmp_path / "decision_log.jsonl", max_bytes=1024, archive_count=2)
     for index in range(40):

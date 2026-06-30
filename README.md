@@ -249,7 +249,7 @@ BREMEN_SMTP_FROM=Bremen <bot@example.com>
 - 관리자 보호: key 변경 API는 `X-Admin-Token` 헤더가 필요합니다.
   - 서버 환경변수: `BREMEN_ADMIN_TOKEN` (미설정 시 기본값 `bremen-admin-dev`)
 - 지원 provider: `openai`, `anthropic`, `gemini`, `stability`, `google`
-- 프론트 `내 공간 > API 키 관리`에서 키 등록/삭제가 가능하며, `NEXT_PUBLIC_BREMEN_ADMIN_TOKEN`을 설정하면 관리자 토큰 입력값이 미리 채워집니다.
+- 프론트 `내 공간 > API 키 관리`에서 키 등록/삭제가 가능하며, hybrid/local 모드에서는 필요한 경우 관리자 토큰을 화면에 직접 입력합니다. 관리자 토큰은 `NEXT_PUBLIC_*` 환경변수로 전달하지 않습니다.
 - actor는 인증 헤더(`X-User-Id`)에서 서버가 자동 기록합니다. (`X-User-Id` 없으면 `system`)
 - 권한 헤더(`X-User-Role`) 기반 role 체크(예: owner/admin) 적용
 - 키 등록 API:
