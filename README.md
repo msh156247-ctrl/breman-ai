@@ -365,7 +365,10 @@ BREMEN_SMTP_FROM=Bremen <bot@example.com>
 
 ### WebSocket Access Guard (Phase-6)
 
-- WebSocket identity는 query param으로 전달합니다: `user_id`, `user_role`
+- WebSocket identity는 JWT query param을 우선 사용합니다: `?jwt=<access_token>`
+- `BREMEN_AUTH_JWT_ONLY=true`에서는 JWT 없는 WebSocket 연결을 허용하지 않습니다.
+- 로컬 hybrid 모드에서는 JWT가 없을 때만 기존 `user_id`, `user_role` query fallback을 허용합니다.
+- `jwt` query가 제공됐는데 invalid/expired면 `user_id/user_role`로 폴백하지 않고 close code `1008`, reason `ws_auth_invalid`로 종료합니다.
 - `GET /ws`(global stream): `owner|admin`만 연결 허용
 - `GET /ws/{mission_id}`(mission stream): `owner|admin` 또는 mission owner만 연결 허용
 - 권한이 없으면 WebSocket close code `1008`로 종료됩니다.
