@@ -1495,6 +1495,32 @@ def test_provider_keys_are_encrypted_at_rest() -> None:
     assert row["masked"] != raw_key
 
 
+def test_validation_errors_redact_sensitive_inputs() -> None:
+    raw_api_key = f"sk-validation-secret-{uuid.uuid4().hex}"
+    raw_authorization = f"Bearer validation-auth-{uuid.uuid4().hex}"
+    raw_admin_token = f"validation-admin-{uuid.uuid4().hex}"
+    response = client.post(
+        "/api/keys/register",
+        headers={
+            **_headers("owner-u", "owner"),
+            "X-Admin-Token": raw_admin_token,
+            "Authorization": raw_authorization,
+        },
+        json={
+            "api_key": raw_api_key,
+            "authorization": raw_authorization,
+            "x-admin-token": raw_admin_token,
+        },
+    )
+
+    assert response.status_code == 422
+    body = response.text
+    assert raw_api_key not in body
+    assert raw_authorization not in body
+    assert raw_admin_token not in body
+    assert body.count("***REDACTED***") >= 3
+
+
 def test_key_registry_does_not_mutate_deployment_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
