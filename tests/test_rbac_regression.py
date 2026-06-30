@@ -14,6 +14,7 @@ from starlette.websockets import WebSocketDisconnect
 from api.server import (
     ConnectionManager,
     DEFAULT_JWT_SECRET,
+    _deliver_approval_notification,
     _resolve_team_member,
     app,
     approval_notification_outbox,
@@ -469,6 +470,82 @@ def test_approval_external_channels_dispatch_to_configured_webhooks(monkeypatch:
 
         events = decision_log.list_by_mission(mission_id)
         assert sum(1 for event in events if event.get("type") == "approval_notification_delivery") == 3
+
+
+def test_email_approval_notification_uses_smtp_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    sent_messages: list[dict[str, object]] = []
+
+    class FakeSMTP:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            self.host = host
+            self.port = port
+            self.timeout = timeout
+            self.started_tls = False
+            self.login_args: tuple[str, str] | None = None
+
+        def __enter__(self) -> "FakeSMTP":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def starttls(self, context: object) -> None:
+            self.started_tls = context is not None
+
+        def login(self, username: str, password: str) -> None:
+            self.login_args = (username, password)
+
+        def send_message(self, message: object) -> None:
+            sent_messages.append(
+                {
+                    "host": self.host,
+                    "port": self.port,
+                    "timeout": self.timeout,
+                    "started_tls": self.started_tls,
+                    "login_args": self.login_args,
+                    "message": message,
+                }
+            )
+
+    monkeypatch.setattr("api.server.smtplib.SMTP", FakeSMTP)
+    monkeypatch.delenv("BREMEN_APPROVAL_EMAIL_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("BREMEN_APPROVAL_WEBHOOK_URL", raising=False)
+    monkeypatch.setenv("BREMEN_PUBLIC_BASE_URL", "https://ops.example.test")
+    monkeypatch.setenv("BREMEN_SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("BREMEN_SMTP_PORT", "2525")
+    monkeypatch.setenv("BREMEN_SMTP_USER", "mailer@example.test")
+    monkeypatch.setenv("BREMEN_SMTP_PASSWORD", "smtp-password")
+    monkeypatch.setenv("BREMEN_SMTP_FROM", "Bremen <bot@example.test>")
+    monkeypatch.delenv("BREMEN_SMTP_USE_SSL", raising=False)
+
+    result = _deliver_approval_notification(
+        {
+            "id": "smtp-note-1",
+            "mission_id": "mission-smtp",
+            "task_id": "task-review",
+            "gate_stage": "before_run",
+            "channel": "email",
+            "target": "ops@example.test",
+            "requested_at": 123.0,
+        }
+    )
+
+    assert result["delivery_status"] == "sent"
+    assert result["delivery_transport"] == "smtp"
+    assert result["delivery_error"] == ""
+    assert len(sent_messages) == 1
+    sent = sent_messages[0]
+    assert sent["host"] == "smtp.example.test"
+    assert sent["port"] == 2525
+    assert sent["started_tls"] is True
+    assert sent["login_args"] == ("mailer@example.test", "smtp-password")
+    message = sent["message"]
+    assert message["To"] == "ops@example.test"
+    assert message["From"] == "Bremen <bot@example.test>"
+    body = message.get_content()
+    assert "Mission: mission-smtp" in body
+    assert "Task: task-review" in body
+    assert "https://ops.example.test/chat/mission-smtp?tab=timeline" in body
 
 
 def test_approval_channel_settings_are_masked_and_user_scoped() -> None:
