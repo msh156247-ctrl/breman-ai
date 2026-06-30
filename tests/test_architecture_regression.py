@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -18,6 +19,40 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 
 def _headers(user_id: str, role: str = "owner") -> dict[str, str]:
     return {"X-User-Id": user_id, "X-User-Role": role}
+
+
+def test_readme_api_section_lists_public_fastapi_routes() -> None:
+    lines = (ROOT_DIR / "README.md").read_text(encoding="utf-8").splitlines()
+    start = lines.index("## API") + 1
+    documented: set[tuple[str, str]] = set()
+    route_pattern = re.compile(r"^- `(?P<method>GET|POST|PUT|PATCH|DELETE|WS) (?P<path>[^`]+)`")
+
+    for line in lines[start:]:
+        if not line.strip():
+            if documented:
+                break
+            continue
+        match = route_pattern.match(line)
+        if match is None:
+            if documented:
+                break
+            continue
+        path = match.group("path").split("?", 1)[0]
+        documented.add((match.group("method"), path))
+
+    public_routes: set[tuple[str, str]] = set()
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        if not path.startswith(("/api", "/ws")):
+            continue
+        methods = getattr(route, "methods", None)
+        if methods:
+            public_routes.update((method, path) for method in methods if method not in {"HEAD", "OPTIONS"})
+        else:
+            public_routes.add(("WS", path))
+
+    assert public_routes - documented == set()
+    assert documented - public_routes == set()
 
 
 def test_workspace_settings_round_trip_restores_execution_graph() -> None:
