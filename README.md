@@ -70,6 +70,12 @@ BREMEN_CORS_ORIGINS=http://localhost:3000,https://your-frontend.example.com
 
 백엔드(FastAPI)는 Vercel이 아닌 별도 호스트(Railway, Render, VM 등)에서 `python -m api.server` 로 띄우는 구성을 권장합니다.
 
+## Staging 배포
+
+- Railway API는 저장소 루트의 `railway.toml`을 사용합니다.
+- Vercel 프론트는 Root Directory를 `frontend`로 두고 `frontend/vercel.json`을 사용합니다.
+- JWT-only, persistent runtime volume, 고정 CORS origin, QA session 발급 절차는 `docs/STAGING.md`를 기준으로 관리합니다.
+
 ## API
 
 - `POST /api/missions`

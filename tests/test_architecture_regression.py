@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -53,6 +54,28 @@ def test_readme_api_section_lists_public_fastapi_routes() -> None:
 
     assert public_routes - documented == set()
     assert documented - public_routes == set()
+
+
+def test_staging_deployment_configs_match_documented_contracts() -> None:
+    railway = tomllib.loads((ROOT_DIR / "railway.toml").read_text(encoding="utf-8"))
+    deploy = railway["deploy"]
+    assert "api.server:app" in deploy["startCommand"]
+    assert "--port $PORT" in deploy["startCommand"]
+    assert deploy["healthcheckPath"] == "/api/health"
+    assert deploy["numReplicas"] == 1
+
+    vercel = json.loads((ROOT_DIR / "frontend" / "vercel.json").read_text(encoding="utf-8"))
+    assert vercel["framework"] == "nextjs"
+    assert vercel["installCommand"] == "npm install"
+    assert vercel["buildCommand"] == "npm run build"
+
+    ignored = set((ROOT_DIR / "frontend" / ".vercelignore").read_text(encoding="utf-8").splitlines())
+    assert {".next", ".next-*", "node_modules", "*.log", ".env*.local"}.issubset(ignored)
+
+    readme = (ROOT_DIR / "README.md").read_text(encoding="utf-8")
+    assert "`docs/STAGING.md`" in readme
+    assert "`railway.toml`" in readme
+    assert "`frontend/vercel.json`" in readme
 
 
 def test_workspace_settings_round_trip_restores_execution_graph() -> None:
