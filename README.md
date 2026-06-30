@@ -246,17 +246,19 @@ BREMEN_SMTP_FROM=Bremen <bot@example.com>
 ## Provider API Key Registry
 
 - 개인이 발급한 provider API key를 먼저 등록해야 해당 provider를 사용할 수 있습니다.
-- 관리자 보호: key 변경 API는 `X-Admin-Token` 헤더가 필요합니다.
+- 관리자 보호: key 변경 API는 `owner|admin` 권한이 필요합니다.
+  - local/hybrid 모드에서는 `X-Admin-Token`도 함께 요구합니다.
+  - `BREMEN_AUTH_JWT_ONLY=true`에서는 유효한 `owner|admin` JWT면 브라우저 관리자 토큰 없이 key 변경이 가능합니다.
   - 서버 환경변수: `BREMEN_ADMIN_TOKEN` (미설정 시 기본값 `bremen-admin-dev`)
 - 지원 provider: `openai`, `anthropic`, `gemini`, `stability`, `google`
 - 프론트 `내 공간 > API 키 관리`에서 키 등록/삭제가 가능하며, hybrid/local 모드에서는 필요한 경우 관리자 토큰을 화면에 직접 입력합니다. 관리자 토큰은 `NEXT_PUBLIC_*` 환경변수로 전달하지 않습니다.
 - actor는 인증 헤더(`X-User-Id`)에서 서버가 자동 기록합니다. (`X-User-Id` 없으면 `system`)
 - 권한 헤더(`X-User-Role`) 기반 role 체크(예: owner/admin) 적용
 - 키 등록 API:
-  - `POST /api/keys/register` (`provider`, `api_key`) + `X-Admin-Token` + `X-User-Id` + `X-User-Role`
+  - `POST /api/keys/register` (`provider`, `api_key`) + `owner|admin` identity + local/hybrid `X-Admin-Token`
   - `GET /api/keys/status`
   - `GET /api/keys-history?limit=20&offset=0&provider=...&actor=...&action=...`
-  - `DELETE /api/keys/{provider}` + `X-Admin-Token` + `X-User-Id` + `X-User-Role`
+  - `DELETE /api/keys/{provider}` + `owner|admin` identity + local/hybrid `X-Admin-Token`
 - 키 이력에는 `action(register/delete)`와 `actor(변경 주체)`가 함께 기록됩니다.
 - 감사 필드로 `ip`, `user_agent`도 함께 기록됩니다.
 - 검증 에러 응답(422)은 서버에서 민감 필드(`api_key`, `authorization`, `x-admin-token`)를 자동 마스킹합니다.
@@ -273,6 +275,7 @@ BREMEN_SMTP_FROM=Bremen <bot@example.com>
   - `X-User-Role`: `owner|admin|supervisor|member|viewer`
 - 관리자 보호 API 추가 헤더:
   - `X-Admin-Token` (`BREMEN_ADMIN_TOKEN`과 일치 필요)
+  - 예외: `BREMEN_AUTH_JWT_ONLY=true`의 provider key 변경 API는 `owner|admin` JWT를 관리자 증명으로 사용합니다.
 - JWT(1차 전환):
   - `Authorization: Bearer <jwt>` 지원
   - `POST /api/auth/token`은 `BREMEN_ADMIN_TOKEN`으로 보호되며 `user_id`, `role`, `ttl_seconds`를 받아 JWT를 발급합니다.

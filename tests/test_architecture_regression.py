@@ -197,6 +197,13 @@ def test_frontend_does_not_reference_public_admin_token_env() -> None:
     assert offenders == []
 
 
+def test_readme_documents_jwt_only_key_management_without_browser_admin_token() -> None:
+    readme = (ROOT_DIR / "README.md").read_text(encoding="utf-8")
+    assert "`BREMEN_AUTH_JWT_ONLY=true`에서는 유효한 `owner|admin` JWT" in readme
+    assert "브라우저 관리자 토큰 없이 key 변경" in readme
+    assert "provider key 변경 API는 `owner|admin` JWT를 관리자 증명으로 사용" in readme
+
+
 def test_decision_log_rotates_and_keeps_indexed_mission_queries(tmp_path: Path) -> None:
     log = DecisionLog(tmp_path / "decision_log.jsonl", max_bytes=1024, archive_count=2)
     for index in range(40):
