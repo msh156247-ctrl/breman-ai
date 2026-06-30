@@ -79,8 +79,13 @@ BREMEN_CORS_ORIGINS=http://localhost:3000,https://your-frontend.example.com
 - `GET /api/missions/{mission_id}/timeline`
 - `GET /api/missions/{mission_id}/evaluations`
 - `POST /api/missions/{mission_id}/approve`
+- `POST /api/missions/{mission_id}/approval-notifications/retry`
 - `GET /api/approvals/pending`
 - `GET /api/capabilities`
+- `GET /api/workspace/settings`
+- `PUT /api/workspace/settings`
+- `GET /api/approval-channels/settings`
+- `PUT /api/approval-channels/settings`
 - `POST /api/keys/register`
 - `GET /api/keys/status`
 - `GET /api/keys-history?limit=20&offset=0&provider=...&actor=...&action=...`
@@ -113,14 +118,17 @@ BREMEN_CORS_ORIGINS=http://localhost:3000,https://your-frontend.example.com
 - `POST /api/auth/token` (admin, local/dev session token issuance)
 - `GET /api/auth/whoami`
 - `GET /api/auth/permissions`
-- `GET /api/graph/teams`
+- `GET /api/auth/migration-stats`
+- `GET /api/graph/workflows`
+- `GET /api/graph/teams` (deprecated compatibility alias)
+- `GET /api/compatibility`
 - `GET /api/ontology`
 - `GET /api/routing/preview?goal=...`
 - `GET /api/health`
 - `WS /ws`
 - `WS /ws/{mission_id}`
 
-`POST /api/missions`는 기본 필드(`goal`, `budget`, `use_mock`) 외에 스튜디오 실행 메타데이터(`workflow_id`, `workflow_label`, `workflow_graph`, `auto_mode`)를 저장합니다. `team_id`, `team_label`, `team_graph`는 기존 클라이언트를 위한 deprecated 호환 별칭이며 `/api/compatibility`에서 현재 매핑을 확인할 수 있습니다.
+`POST /api/missions`는 기본 필드(`goal`, `budget`, `use_mock`) 외에 스튜디오 실행 메타데이터(`workflow_id`, `workflow_label`, `workflow_graph`, `auto_mode`)를 저장합니다. `team_id`, `team_label`, `team_graph`는 기존 클라이언트를 위한 deprecated 호환 별칭이며 `/api/compatibility`에서 현재 매핑을 확인할 수 있습니다. 그래프 조회도 `/api/graph/workflows`가 canonical이고 `/api/graph/teams`는 같은 응답을 유지하는 legacy alias입니다.
 
 ## Ontology Runtime
 
@@ -274,7 +282,7 @@ BREMEN_SMTP_FROM=Bremen <bot@example.com>
   - 개발 기본 시크릿: `BREMEN_JWT_SECRET` 미설정 시 내장 dev secret 사용 (운영에서는 반드시 환경변수 설정 권장)
   - JWT 검증: `exp` 필수, `BREMEN_JWT_ISSUER`/`BREMEN_JWT_AUDIENCE` 설정 시 `iss`/`aud` 검증 수행
   - `BREMEN_AUTH_JWT_ONLY=true` 설정 시 헤더 fallback 없이 JWT-only 모드로 동작
-  - `BREMEN_ENV=production`에서는 JWT-only, 32자 이상 JWT/암호화 시크릿, 24자 이상 관리자 토큰이 모두 없으면 서버 시작을 거부합니다.
+  - `BREMEN_ENV=staging|prod|production`에서는 JWT-only, 32자 이상 JWT/암호화 시크릿, 24자 이상 관리자 토큰이 모두 없으면 서버 시작을 거부합니다.
 - 권한 거부 시 표준 응답:
   - `403 {"detail":"role_not_allowed:<role>"}`
   - 리소스 스코프 거부는 목적별 detail(`mission_access_denied`, `team_view_permission_required` 등) 반환
@@ -327,7 +335,8 @@ BREMEN_SMTP_FROM=Bremen <bot@example.com>
   - `GET /api/channels` (source/target 중 하나라도 가시 팀이면 노출)
   - `GET /api/contracts/team-royalty` (source/target 중 하나라도 가시 팀이면 노출)
   - `GET /api/contracts/team-royalty/history` (요청 pair 둘 다 비가시면 403)
-  - `GET /api/graph/teams` (가시 팀 그래프만 노출)
+  - `GET /api/graph/workflows` (가시 워크플로우/팀 그래프만 노출)
+  - `GET /api/graph/teams` (deprecated compatibility alias)
   - `GET /api/ledger` (가시 팀 관련 원장만 노출)
   - `GET /api/ledger/settlements` (가시 팀 정산만 노출, 지정 team_id가 비가시면 403)
 
@@ -465,5 +474,5 @@ BREMEN_SMTP_FROM=Bremen <bot@example.com>
 - 계약 히스토리 조회 API:
   - `GET /api/contracts/team-royalty/history?source_team_id=...&target_team_id=...`
 - 채널 publish 시 계약이 존재하고 `provider_cost > 0`이면 inter-team 로열티 원장이 자동 기록됩니다.
-- 팀 그래프 API (`GET /api/graph/teams`)로 팀 노드/채널 엣지/메시지 수/로열티 수익 메트릭을 조회할 수 있습니다.
+- 워크플로우 그래프 API (`GET /api/graph/workflows`)로 팀 노드/채널 엣지/메시지 수/로열티 수익 메트릭을 조회할 수 있습니다. 기존 `GET /api/graph/teams`는 호환 alias로 유지됩니다.
 - 정산 집계 API (`GET /api/ledger/settlements`)로 일/주/월 단위 팀별 로열티 정산 요약을 조회할 수 있습니다.
