@@ -2385,6 +2385,32 @@ def test_invalid_bearer_token_does_not_fallback_to_headers() -> None:
     assert res.json()["detail"] in {"jwt_invalid_or_expired", "jwt_invalid_identity_claims"}
 
 
+def test_auth_bridge_sets_rollout_observability_headers() -> None:
+    token = jwt.encode(
+        {"sub": "jwt-header-user", "role": "member", "exp": int(time.time()) + 3600},
+        DEFAULT_JWT_SECRET,
+        algorithm="HS256",
+    )
+    jwt_response = client.get("/api/auth/whoami", headers={"Authorization": f"Bearer {token}"})
+    assert jwt_response.status_code == 200
+    assert jwt_response.headers["X-Auth-Mode"] in {"hybrid", "jwt_only"}
+    assert jwt_response.headers["X-Auth-Source"] == "jwt"
+    assert "X-Auth-Error" not in jwt_response.headers
+
+    invalid_response = client.get(
+        "/api/auth/whoami",
+        headers={
+            "Authorization": "Bearer invalid.token.value",
+            "X-User-Id": "spoof-user",
+            "X-User-Role": "owner",
+        },
+    )
+    assert invalid_response.status_code == 401
+    assert invalid_response.headers["X-Auth-Mode"] in {"hybrid", "jwt_only"}
+    assert invalid_response.headers["X-Auth-Source"] == "header"
+    assert invalid_response.headers["X-Auth-Error"] in {"jwt_invalid_or_expired", "jwt_invalid_identity_claims"}
+
+
 def test_auth_migration_stats_endpoint_guard_and_shape() -> None:
     denied = client.get("/api/auth/migration-stats", headers=_headers("viewer-u", "viewer"))
     assert denied.status_code == 403
