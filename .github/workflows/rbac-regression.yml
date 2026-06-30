@@ -1,9 +1,9 @@
-name: RBAC Regression
+name: Bremen Regression
 
 on:
   pull_request:
   push:
-    branches: ["main", "master"]
+    branches: ["main", "master", "staging/**"]
 
 jobs:
   regression:

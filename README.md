@@ -281,14 +281,21 @@ BREMEN_SMTP_FROM=Bremen <bot@example.com>
 
 ### CI Regression
 
-- GitHub Actions: `.github/workflows/rbac-regression.yml`
-- 실행 테스트: `python -m pytest -q tests/test_rbac_regression.py`
+- GitHub Actions: `.github/workflows/rbac-regression.yml` (`Bremen Regression`)
+- 트리거: pull request, `main|master|staging/**` push
+- 실행 테스트:
+  - `python -m pytest -q`
+  - `npx tsc --noEmit --pretty false`
+  - `npm run test:flow`
+  - `npm run build`
 - 최소 보장 범위:
   - mission owner ACL
   - key/policy/ontology read guard
   - settlement/team scope guard
   - websocket access guard
   - mission owner DB fallback
+  - workspace graph persistence and legacy workflow aliases
+  - frontend type safety, flow builder serialization, production build
 
 ### Role Guard (Phase-1)
 
