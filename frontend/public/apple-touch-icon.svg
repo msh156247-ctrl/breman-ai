@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" role="img" aria-label="Bremen">
+  <defs>
+    <linearGradient id="bremen-apple-bg" x1="24" x2="156" y1="24" y2="156" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22d3ee" />
+      <stop offset="0.56" stop-color="#2563eb" />
+      <stop offset="1" stop-color="#0f172a" />
+    </linearGradient>
+  </defs>
+  <rect width="180" height="180" rx="42" fill="#07111f" />
+  <rect x="24" y="24" width="132" height="132" rx="36" fill="url(#bremen-apple-bg)" />
+  <path
+    d="M69 52h30c17 0 28 8.9 28 22.6 0 8.2-4.2 14.6-11.5 18 8.8 3.2 14.1 10.4 14.1 20 0 14.5-11.8 23.4-30.4 23.4H69V52Zm28.8 34.2c7.2 0 11.4-3.1 11.4-8.6 0-5.6-4.2-8.6-11.4-8.6H87v17.2h10.8Zm2 32.8c7.8 0 12.2-3.4 12.2-9.2 0-6.1-4.4-9.4-12.2-9.4H87V119h12.8Z"
+    fill="#ffffff"
+  />
+</svg>

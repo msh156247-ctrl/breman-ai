@@ -81,14 +81,9 @@ Environment:
 | Studio QA bootstrap | Pass | `/qa/bootstrap` stored account A session and redirected to `/studio` |
 | Studio initial UI | Pass | Page title `Bremen - Workforce Runtime OS`, Studio/runtime CTA content present |
 | Studio console errors | Pass | No browser console warning/error after initial `/studio` load |
+| Responsive UI smoke | Pass | Headless Edge checked `/studio`, `/runs`, `/market?tab=agents`, `/mypage?tab=approval`, `/guide` at `1280x720`, `663x912`, `627x699`; horizontal overflow 0, tiny target findings 0, browser error/warning logs 0 |
 
 Notes:
 
 - The E2E stack was stopped after the run and generated session files were deleted.
-- The full multi-page responsive browser sweep was attempted but the in-app browser automation timed out during Next dev page traversal, so it remains a manual check item.
-
-## Remaining Manual Check
-
-The in-app Browser viewport capability retained a 1280px layout width while
-requesting 663px and 627px. Those two widths still need one manual browser
-resize pass before production promotion.
+- The responsive sweep now runs through `scripts/e2e-responsive-smoke.mjs`, which uses local Edge/Chrome CDP and does not require third-party browser test packages.

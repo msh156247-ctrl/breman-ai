@@ -66,3 +66,15 @@ python scripts/bootstrap-e2e-sessions.py `
 
 `BREMEN_ADMIN_TOKEN` must be supplied only through the command environment.
 Delete the generated session file after QA.
+
+For isolated local regression before staging promotion:
+
+```powershell
+.\scripts\start-e2e-stack.ps1 -RunId local-smoke
+python scripts\e2e-api-smoke.py --session-file runtime\e2e-session-local-smoke.json
+node scripts\e2e-responsive-smoke.mjs --session-file runtime\e2e-session-local-smoke.json
+.\scripts\stop-e2e-stack.ps1 -StackFile runtime\e2e-stack-local-smoke.json
+```
+
+The responsive smoke uses local Edge/Chrome CDP to verify the main pages at
+`1280x720`, `663x912`, and `627x699` without adding browser-test dependencies.
