@@ -38,6 +38,12 @@ from api.approval_transport import (
     send_smtp_approval_email as _transport_send_smtp_approval_email,
 )
 from api.compat import legacy_api_metadata, mission_workflow_compatibility_fields
+from api.market_views import (
+    decorate_member_for_market as _market_decorate_member,
+    decorate_team_for_market as _market_decorate_team,
+    matches_market_filters as _market_matches_filters,
+    team_member_profiles as _market_team_member_profiles,
+)
 from api.schemas import (
     ApiKeyRegisterRequest,
     ApprovalChannelSettingsRequest,
@@ -947,73 +953,28 @@ def _extract_request_meta(request: Request) -> Dict[str, Any]:
 
 
 def _matches_market_filters(row: Dict[str, Any], category: str | None, search: str | None) -> bool:
-    normalized_category = (category or "").strip().lower()
-    if normalized_category and normalized_category != "전체".lower():
-        row_category = str(row.get("category") or row.get("domain") or "").strip().lower()
-        if row_category != normalized_category:
-            return False
-
-    needle = (search or "").strip().lower()
-    if needle:
-        haystack_parts = [
-            row.get("id", ""),
-            row.get("name", ""),
-            row.get("description", ""),
-            row.get("domain", ""),
-            row.get("category", ""),
-            " ".join(str(x) for x in row.get("capabilities", []) if x is not None),
-            " ".join(str(x) for x in row.get("tags", []) if x is not None),
-        ]
-        if needle not in " ".join(str(part).lower() for part in haystack_parts):
-            return False
-    return True
+    return _market_matches_filters(row, category, search)
 
 
 def _decorate_member_for_market(profile: Dict[str, Any]) -> Dict[str, Any]:
-    provider = str(profile.get("provider", "")).strip().lower()
-    runtime_supported = provider in RUNTIME_SUPPORTED_PROVIDERS
-    key_registered = provider == "mock" or _is_provider_key_registered(provider)
-    available = runtime_supported and key_registered
-    return {
-        **profile,
-        "category": profile.get("category") or profile.get("domain", "general"),
-        "is_ai": profile.get("is_ai", True),
-        "published": profile.get("published", True),
-        "available": available,
-        "runtime_supported": runtime_supported,
-        "availability_reason": (
-            "available"
-            if available
-            else "runtime_provider_not_supported"
-            if not runtime_supported
-            else "provider_api_key_not_registered"
-        ),
-        "required_api": provider,
-    }
+    return _market_decorate_member(
+        profile,
+        runtime_supported_providers=RUNTIME_SUPPORTED_PROVIDERS,
+        is_provider_key_registered=_is_provider_key_registered,
+    )
 
 
 def _decorate_team_for_market(team: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        **team,
-        "category": team.get("category") or team.get("domain", "general"),
-        "is_template": team.get("is_template", True),
-        "published": team.get("published", True),
-        "member_count": len(team.get("members", [])),
-    }
+    return _market_decorate_team(team)
 
 
 def _team_member_profiles(team: Dict[str, Any]) -> List[Dict[str, Any]]:
-    profiles: List[Dict[str, Any]] = []
-    for row in team.get("members", []):
-        if not isinstance(row, dict):
-            continue
-        member_id = str(row.get("member_id", "")).strip()
-        if not member_id:
-            continue
-        profile = get_member_profile(member_id)
-        if profile is not None:
-            profiles.append(_decorate_member_for_market({**profile, "team_role_type": row.get("role_type")}))
-    return profiles
+    return _market_team_member_profiles(
+        team,
+        get_member_profile=get_member_profile,
+        runtime_supported_providers=RUNTIME_SUPPORTED_PROVIDERS,
+        is_provider_key_registered=_is_provider_key_registered,
+    )
 
 
 async def _close_ws_policy(websocket: WebSocket, reason: str) -> None:

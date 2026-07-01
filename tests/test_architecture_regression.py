@@ -279,3 +279,15 @@ def test_approval_transport_is_split_but_server_keeps_patchable_wrappers() -> No
     assert "def _post_json_webhook" in server_source
     assert "def _send_smtp_approval_email" in server_source
     assert "class NoRedirectHandler" not in server_source
+
+
+def test_market_view_helpers_are_split_from_api_server() -> None:
+    server_source = (ROOT_DIR / "api" / "server.py").read_text(encoding="utf-8")
+    market_source = (ROOT_DIR / "api" / "market_views.py").read_text(encoding="utf-8")
+
+    assert "from api.market_views import" in server_source
+    assert "def matches_market_filters" in market_source
+    assert "def decorate_member_for_market" in market_source
+    assert "def decorate_team_for_market" in market_source
+    assert "def team_member_profiles" in market_source
+    assert "haystack_parts = [" not in server_source
