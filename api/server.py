@@ -27,7 +27,6 @@ from api.auth_runtime import (
     resolve_jwt_identity_middleware,
     _auth_mode_name,
     _build_jwt_payload,
-    _is_jwt_only_mode,
     _is_truthy,
     _require_roles,
     _resolve_identity,
@@ -38,6 +37,12 @@ from api.approval_transport import (
     send_smtp_approval_email as _transport_send_smtp_approval_email,
 )
 from api.compat import legacy_api_metadata, mission_workflow_compatibility_fields
+from api.key_admin import (
+    mask_key as _mask_key,
+    require_admin as _require_admin,
+    require_admin_token_or_jwt_owner as _require_admin_token_or_jwt_owner,
+    sanitize_backup_label as _sanitize_backup_label,
+)
 from api.market_views import (
     decorate_member_for_market as _market_decorate_member,
     decorate_team_for_market as _market_decorate_team,
@@ -64,7 +69,6 @@ from api.schemas import (
     WorkspaceSettingsRequest,
 )
 from api.security import (
-    ADMIN_TOKEN_ENV,
     DEFAULT_JWT_SECRET,
     JWT_ALGORITHM,
     JWT_SECRET_ENV,
@@ -364,32 +368,6 @@ def _period_key(ts: float, cycle: str) -> str:
 
 def _is_provider_key_registered(provider: str) -> bool:
     return is_provider_key_registered(provider)
-
-
-def _mask_key(raw: str) -> str:
-    clean = raw.strip()
-    if len(clean) <= 6:
-        return "*" * len(clean)
-    return f"{clean[:3]}{'*' * (len(clean) - 6)}{clean[-3:]}"
-
-
-def _require_admin(x_admin_token: str | None) -> None:
-    expected = os.getenv(ADMIN_TOKEN_ENV, "bremen-admin-dev")
-    if not x_admin_token or x_admin_token != expected:
-        raise HTTPException(status_code=403, detail="admin_token_required")
-
-
-def _require_admin_token_or_jwt_owner(
-    identity: Dict[str, str],
-    x_admin_token: str | None,
-) -> None:
-    if (
-        _is_jwt_only_mode()
-        and request_identity_source_ctx.get() == "jwt"
-        and identity.get("role") in {"owner", "admin"}
-    ):
-        return
-    _require_admin(x_admin_token)
 
 
 def _can_manage_team(identity: Dict[str, str], team: Dict[str, Any]) -> bool:
@@ -1974,10 +1952,7 @@ async def create_db_backup(
     _require_admin(x_admin_token)
     identity = _resolve_identity(x_user_id, x_user_role)
     _require_roles(identity, {"owner", "admin"})
-    safe_label = None
-    if label:
-        safe_label = "".join(ch for ch in label if ch.isalnum() or ch in {"-", "_"})
-        safe_label = safe_label[:32] if safe_label else None
+    safe_label = _sanitize_backup_label(label)
     result = backup_database(label=safe_label)
     return {"ok": True, **result}
 

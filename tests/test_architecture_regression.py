@@ -291,3 +291,17 @@ def test_market_view_helpers_are_split_from_api_server() -> None:
     assert "def decorate_team_for_market" in market_source
     assert "def team_member_profiles" in market_source
     assert "haystack_parts = [" not in server_source
+
+
+def test_key_admin_helpers_are_split_from_api_server() -> None:
+    server_source = (ROOT_DIR / "api" / "server.py").read_text(encoding="utf-8")
+    key_admin_source = (ROOT_DIR / "api" / "key_admin.py").read_text(encoding="utf-8")
+
+    assert "from api.key_admin import" in server_source
+    assert "def mask_key" in key_admin_source
+    assert "def require_admin" in key_admin_source
+    assert "def require_admin_token_or_jwt_owner" in key_admin_source
+    assert "def sanitize_backup_label" in key_admin_source
+    assert "def _mask_key" not in server_source
+    assert "def _require_admin" not in server_source
+    assert "ch.isalnum() or ch in" not in server_source
