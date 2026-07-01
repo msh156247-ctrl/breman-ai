@@ -2,11 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { type Node } from "reactflow";
 import { useAppStore, type LoopRegion } from "../../stores/app.store";
-import { createMission, fetchApprovalChannelSettings, type ApprovalChannelId, type ApprovalChannelSettings } from "../../lib/api";
+import { createMission } from "../../lib/api";
 import { isDemoModeEnabled } from "../../lib/demo-mode";
 import { buildConditionDslContract, buildWorkflowGraphPayload } from "../../lib/workflow-graph";
 import {
-  APPROVAL_CHANNEL_OPTIONS,
   CANVAS_UTILITY_NODES,
   describeExecuteError,
   getNodeLabel,
@@ -14,11 +13,8 @@ import {
   LOOP_EXIT_FINISH,
   normalizeConditionBranches,
   orderFlowNodes,
-  studioApprovalChannelState,
-  type ApprovalSettingsLoadState,
   type ConditionBranch,
-  type FlowModalTab,
-  type StudioApprovalChannelState
+  type FlowModalTab
 } from "./studio-canvas-model";
 import {
   buildLoopRegionFromBand,
@@ -27,6 +23,7 @@ import {
   getUnsupportedLiveProviders,
   resolveAutoAddPosition
 } from "./studio-state-builders";
+import { useStudioApprovalChannels } from "./useStudioApprovalChannels";
 import { useStudioDraftActions } from "./useStudioDraftActions";
 
 export function useStudioCanvasState() {
@@ -38,9 +35,6 @@ export function useStudioCanvasState() {
   const [useMockRuntime, setUseMockRuntime] = useState(true);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executeError, setExecuteError] = useState("");
-  const [approvalSettings, setApprovalSettings] = useState<ApprovalChannelSettings | null>(null);
-  const [approvalEnvOverrides, setApprovalEnvOverrides] = useState<Record<string, boolean>>({});
-  const [approvalSettingsState, setApprovalSettingsState] = useState<ApprovalSettingsLoadState>("idle");
   const [showFlowModal, setShowFlowModal] = useState(() => searchParams.get("panel") === "flow");
   const [flowModalTab, setFlowModalTab] = useState<FlowModalTab>("steps");
   const [showAddPanel, setShowAddPanel] = useState(false);
@@ -110,23 +104,6 @@ export function useStudioCanvasState() {
     : selectedNodeData.execution_mode === "confirm"
       ? ["admin_queue"]
       : [];
-  const approvalChannelStates = useMemo(
-    () =>
-      Object.fromEntries(
-        APPROVAL_CHANNEL_OPTIONS.map((channel) => [
-          channel.id,
-          studioApprovalChannelState(channel.id, approvalSettings, approvalEnvOverrides, approvalSettingsState)
-        ])
-      ) as Record<ApprovalChannelId, StudioApprovalChannelState>,
-    [approvalEnvOverrides, approvalSettings, approvalSettingsState]
-  );
-  const selectedUnreadyApprovalChannels = useMemo(
-    () =>
-      selectedApprovalChannels
-        .map((channel) => channel as ApprovalChannelId)
-        .filter((channel) => channel !== "admin_queue" && approvalChannelStates[channel]?.tone === "warn"),
-    [approvalChannelStates, selectedApprovalChannels]
-  );
   const linkableTargetNodes = useMemo(
     () => nodes.filter((node) => node.id !== selectedNodeId),
     [nodes, selectedNodeId]
@@ -264,27 +241,6 @@ export function useStudioCanvasState() {
   }, [searchParams]);
 
   useEffect(() => {
-    let cancelled = false;
-    setApprovalSettingsState("loading");
-    fetchApprovalChannelSettings()
-      .then((response) => {
-        if (cancelled) return;
-        setApprovalSettings(response.settings);
-        setApprovalEnvOverrides(response.env_overrides || {});
-        setApprovalSettingsState("ready");
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setApprovalSettings(null);
-        setApprovalEnvOverrides({});
-        setApprovalSettingsState("unavailable");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
     if (!selectedNodeId) {
       setLinkTargetId("");
       return;
@@ -369,6 +325,15 @@ export function useStudioCanvasState() {
     [selectedNodeId, updateNodeData]
   );
 
+  const {
+    approvalChannelStates,
+    selectedUnreadyApprovalChannels,
+    toggleSelectedApprovalChannel
+  } = useStudioApprovalChannels({
+    selectedApprovalChannels,
+    updateSelectedNodeData
+  });
+
   const updateSelectedConditionMode = useCallback(
     (mode: string) => {
       updateSelectedNodeData({
@@ -384,21 +349,6 @@ export function useStudioCanvasState() {
       });
     },
     [selectedNodeData.condition_expression, updateSelectedNodeData]
-  );
-
-  const toggleSelectedApprovalChannel = useCallback(
-    (channelId: string) => {
-      const active = selectedApprovalChannels.includes(channelId);
-      const channelState = approvalChannelStates[channelId as ApprovalChannelId];
-      const canEnable = channelId === "admin_queue" || channelState?.tone === "ready";
-      if (!active && !canEnable) return;
-
-      const nextChannels = active
-        ? selectedApprovalChannels.filter((id) => id !== channelId)
-        : [...selectedApprovalChannels, channelId];
-      updateSelectedNodeData({ approval_channels: nextChannels.length > 0 ? nextChannels : ["admin_queue"] });
-    },
-    [approvalChannelStates, selectedApprovalChannels, updateSelectedNodeData]
   );
 
   const toggleLoopBandNode = useCallback(
