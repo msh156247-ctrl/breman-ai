@@ -16,6 +16,13 @@ from api.access_control import (
     resolve_team_member,
     visible_team_ids,
 )
+from api.approval_notifications import (
+    approval_notification_id,
+    approval_notification_payload,
+    normalize_approval_channels,
+    notification_row_from_event,
+    retryable_approval_notifications,
+)
 from api.mission_views import (
     mission_artifacts_response,
     mission_evaluations_response,
@@ -293,6 +300,72 @@ def test_approval_transport_is_split_but_server_keeps_patchable_wrappers() -> No
     assert "def _post_json_webhook" in server_source
     assert "def _send_smtp_approval_email" in server_source
     assert "class NoRedirectHandler" not in server_source
+
+
+def test_approval_notification_helpers_are_split_from_api_server() -> None:
+    server_source = (ROOT_DIR / "api" / "server.py").read_text(encoding="utf-8")
+    notification_source = (ROOT_DIR / "api" / "approval_notifications.py").read_text(encoding="utf-8")
+
+    assert "from api.approval_notifications import" in server_source
+    assert "def normalize_approval_channel" in notification_source
+    assert "def approval_notification_payload" in notification_source
+    assert "def notification_row_from_event" in notification_source
+    assert "def retryable_approval_notifications" in notification_source
+    assert "APPROVAL_CHANNEL_ALIASES" not in server_source
+    assert "def _normalize_approval_channel" not in server_source
+    assert "def _approval_notification_id" not in server_source
+    assert "def _notification_row_from_event" not in server_source
+    assert "retryable_statuses" not in server_source
+
+
+def test_approval_notification_helpers_normalize_payload_and_retry_targets() -> None:
+    channels = normalize_approval_channels(["관리자", "이메일", "문자", "카카오톡", "email"])
+    assert channels == ["admin_queue", "email", "sms", "kakao"]
+
+    notification_id = approval_notification_id("mission-a", "task-a", "before_run", "email")
+    assert notification_id == "mission-a:task-a:before_run:email"
+
+    payload = approval_notification_payload(
+        {
+            "id": notification_id,
+            "mission_id": "mission-a",
+            "task_id": "task-a",
+            "gate_stage": "before_run",
+            "channel": "email",
+            "target": "ops@example.com",
+            "requested_at": 123,
+        },
+        public_url=lambda path, mission_id: f"https://ops.test{path}",
+    )
+    assert payload["approve_url"] == "https://ops.test/runs?mission=mission-a"
+    assert payload["ops_url"] == "https://ops.test/chat/mission-a?tab=timeline"
+
+    row = notification_row_from_event(
+        {
+            "type": "approval_notification_delivery",
+            "mission_id": "mission-a",
+            "task_id": "task-a",
+            "gate_stage": "before_run",
+            "channel": "email",
+            "timestamp": 100,
+            "delivery_status": "failed",
+            "delivery_transport": "webhook",
+            "delivery_error": "down",
+        }
+    )
+    assert row["id"] == notification_id
+    assert row["delivery_status"] == "failed"
+    assert row["delivery_transport"] == "webhook"
+
+    retryable = retryable_approval_notifications(
+        [
+            row,
+            {"id": "mission-a:task-a:before_run:admin_queue", "channel": "admin_queue", "delivery_status": "pending"},
+            {"id": "mission-a:task-a:before_run:sms", "channel": "sms", "delivery_status": "sent"},
+        ],
+        channels=["이메일"],
+    )
+    assert [item["id"] for item in retryable] == [notification_id]
 
 
 def test_market_view_helpers_are_split_from_api_server() -> None:
