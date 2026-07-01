@@ -20,9 +20,7 @@ import { useAppStore } from "../../stores/app.store";
 import type { MissionRunState } from "../../types";
 import {
   appendUniqueChatRows,
-  eventChatType,
   eventDate,
-  eventMessage,
   eventToChatRow,
   mergeApiChatRows,
   missionStateLabels,
@@ -33,6 +31,12 @@ import {
   type RuntimeDataMode,
   type SideTab
 } from "./chat-runtime-model";
+import {
+  applyRuntimeNodeState,
+  resolveNodeIdForRuntimeEvent,
+  runtimeEventChatRow,
+  setHumanApprovalNodeState
+} from "./chat-runtime-events";
 
 export function useChatRunSession(runId: string) {
   const router = useRouter();
@@ -62,7 +66,6 @@ export function useChatRunSession(runId: string) {
   const {
     missionRunState,
     clearMissionRunTransitionWarning,
-    setMissionRunState,
     resetMissionRunState,
     artifactVersions,
     nodes,
@@ -93,31 +96,6 @@ export function useChatRunSession(runId: string) {
   useEffect(() => {
     clearMissionRunTransitionWarning();
   }, [clearMissionRunTransitionWarning]);
-
-  const resolveNodeIdForEvent = (taskId?: string, roleText?: string, eventText?: string): string | null => {
-    const normalizedTaskId = String(taskId || "").trim().toLowerCase();
-    if (normalizedTaskId) {
-      const exactTask = nodes.find((node) => {
-        const data = node.data as Record<string, unknown>;
-        return [node.id, data.task_id, data.runtime_task_id]
-          .map((value) => String(value || "").trim().toLowerCase())
-          .includes(normalizedTaskId);
-      });
-      if (exactTask) return exactTask.id;
-    }
-
-    const role = String(roleText || "").toLowerCase();
-    const event = String(eventText || "").toLowerCase();
-    const combined = `${role} ${event}`;
-    if (!combined.trim()) return null;
-    const matched = nodes.find((node) => {
-      const label = String((node.data as any)?.label || "").toLowerCase();
-      const agentId = String((node.data as any)?.agent_id || "").toLowerCase();
-      const category = String((node.data as any)?.category || "").toLowerCase();
-      return [label, agentId, category].some((token) => token && combined.includes(token));
-    });
-    return matched?.id || null;
-  };
 
   useEffect(() => {
     let alive = true;
@@ -332,16 +310,14 @@ export function useChatRunSession(runId: string) {
         await delay(event.delay);
         if (cancelled) return;
         setMessages((prev) => appendUniqueChatRows(prev, [event.row]));
-        const mappedNodeId = resolveNodeIdForEvent(undefined, event.row.role, event.row.content);
+        const mappedNodeId = resolveNodeIdForRuntimeEvent(nodes, undefined, event.row.role, event.row.content);
         if (mappedNodeId && event.row.type === "agent") {
           setNodeExecutionState(mappedNodeId, "running");
         }
         if (event.row.type === "human_gate") {
           setStatus("blocked");
           transitionRuntimeState("awaiting_approval", "runtime.fallback.human_gate");
-          nodes
-            .filter((n) => String((n.data as any)?.agent_id || "").toLowerCase() === "hitl")
-            .forEach((n) => setNodeExecutionState(n.id, "waiting_input"));
+          setHumanApprovalNodeState(nodes, setNodeExecutionState, "waiting_input");
         }
       }
     };
@@ -389,7 +365,6 @@ export function useChatRunSession(runId: string) {
       }
       const kind = String(data.type || "event");
       const message = String(data.message || JSON.stringify(data));
-      const nextType = eventChatType(kind);
       if (kind === "human_gate_requested") {
         setStatus("blocked");
         transitionRuntimeState("awaiting_approval", "runtime.ws.human_gate_requested");
@@ -426,39 +401,9 @@ export function useChatRunSession(runId: string) {
         setRuntimeRefreshNonce((prev) => prev + 1);
       }
       if (kind.includes("retry")) transitionRuntimeState("retrying", "runtime.ws.retry");
-      const mappedNodeId = resolveNodeIdForEvent(
-        data.task_id ? String(data.task_id) : undefined,
-        data.role ? String(data.role) : undefined,
-        message
-      );
-      if (mappedNodeId) {
-        if (kind === "task_started") setNodeExecutionState(mappedNodeId, "running");
-        if (kind === "task_completed") setNodeExecutionState(mappedNodeId, "completed");
-        if (kind === "task_failed") setNodeExecutionState(mappedNodeId, "failed");
-        if (kind.includes("stream")) setNodeExecutionState(mappedNodeId, "streaming");
-      }
-      if (kind === "human_gate_requested") {
-        nodes
-          .filter((n) => String((n.data as any)?.agent_id || "").toLowerCase() === "hitl")
-          .forEach((n) => setNodeExecutionState(n.id, "waiting_input"));
-      } else if (kind === "human_gate_approved") {
-        nodes
-          .filter((n) => String((n.data as any)?.agent_id || "").toLowerCase() === "hitl")
-          .forEach((n) => setNodeExecutionState(n.id, "completed"));
-      }
-      const eventTarget = String(data.task_id || data.mission_id || runId);
-      const eventStamp = String(data.timestamp || message);
+      applyRuntimeNodeState(nodes, setNodeExecutionState, kind, data, message);
       setMessages((prev) =>
-        appendUniqueChatRows(prev, [
-          {
-            id: `event-${kind}-${eventTarget}-${eventStamp}`,
-            type: nextType,
-            content: message,
-            role: data.role ? String(data.role) : undefined,
-            timestamp: eventDate(data.timestamp),
-            source: "stream"
-          }
-        ])
+        appendUniqueChatRows(prev, [runtimeEventChatRow(runId, kind, data, message)])
       );
     };
     ws.onopen = () => {
@@ -498,7 +443,7 @@ export function useChatRunSession(runId: string) {
       timers.forEach((timer) => clearTimeout(timer));
       ws.close();
     };
-  }, [isDemoMission, mockRunRecord, nodes, runId, resetMissionRunState, setMissionRunState, setNodeExecutionState]);
+  }, [isDemoMission, mockRunRecord, nodes, runId, resetMissionRunState, setNodeExecutionState]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
