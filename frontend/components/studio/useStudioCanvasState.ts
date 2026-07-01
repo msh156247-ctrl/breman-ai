@@ -12,7 +12,6 @@ import {
   formatDraftTime,
   getNodeLabel,
   isConditionNode,
-  LIVE_RUNTIME_PROVIDERS,
   LOOP_EXIT_FINISH,
   normalizeConditionBranches,
   orderFlowNodes,
@@ -22,9 +21,16 @@ import {
   type ApprovalSettingsLoadState,
   type ConditionBranch,
   type FlowModalTab,
-  type StudioApprovalChannelState,
-  type StudioDraft
+  type StudioApprovalChannelState
 } from "./studio-canvas-model";
+import {
+  buildLoopRegionFromBand,
+  buildStudioDraftPayload,
+  createDefaultConditionBranch,
+  getRunReadiness,
+  getUnsupportedLiveProviders,
+  resolveAutoAddPosition
+} from "./studio-state-builders";
 
 export function useStudioCanvasState() {
   const router = useRouter();
@@ -226,33 +232,15 @@ export function useStudioCanvasState() {
     [nodes]
   );
   const budgetNumber = Number(missionBudget);
-  const unsupportedLiveProviders = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          nodes
-            .filter((node) => {
-              const data = (node.data as Record<string, unknown>) || {};
-              const agentId = String(data.agent_id || "").toLowerCase();
-              return !["router", "hitl", "human_approval"].includes(agentId);
-            })
-            .map((node) => String((node.data as Record<string, unknown>)?.required_api || "openai").toLowerCase())
-            .filter((provider) => !LIVE_RUNTIME_PROVIDERS.has(provider))
-        )
-      ),
-    [nodes]
-  );
+  const unsupportedLiveProviders = useMemo(() => getUnsupportedLiveProviders(nodes), [nodes]);
   const runReadiness = useMemo(() => {
-    if (nodes.length === 0) return { label: "노드 필요", tone: "warn" as const };
-    if (!missionGoal.trim()) return { label: "목표 필요", tone: "warn" as const };
-    if (!Number.isFinite(budgetNumber) || budgetNumber <= 0) return { label: "예산 확인", tone: "warn" as const };
-    if (!useMockRuntime && unsupportedLiveProviders.length > 0) {
-      return {
-        label: `${unsupportedLiveProviders.join(", ")} 엔진 미지원`,
-        tone: "warn" as const
-      };
-    }
-    return { label: useMockRuntime ? "Mock 실행 준비" : "Live 실행 준비", tone: "ready" as const };
+    return getRunReadiness({
+      nodeCount: nodes.length,
+      missionGoal,
+      budgetNumber,
+      useMockRuntime,
+      unsupportedLiveProviders
+    });
   }, [budgetNumber, missionGoal, nodes.length, unsupportedLiveProviders, useMockRuntime]);
 
   useEffect(() => {
@@ -330,9 +318,7 @@ export function useStudioCanvasState() {
   }, []);
 
   const getAutoAddPosition = useCallback(() => {
-    const source = selectedNode || orderedFlowNodes[orderedFlowNodes.length - 1] || null;
-    if (!source) return { x: 80, y: 160 };
-    return { x: source.position.x + 320, y: source.position.y };
+    return resolveAutoAddPosition(selectedNode, orderedFlowNodes);
   }, [orderedFlowNodes, selectedNode]);
 
   const appendAgentToFlow = useCallback(
@@ -415,31 +401,16 @@ export function useStudioCanvasState() {
   );
 
   const createLoopRegionFromBand = useCallback(() => {
-    const selectedIds = Array.from(new Set(bandSelectedNodeIds)).filter((nodeId) => nodes.some((node) => node.id === nodeId));
-    if (selectedIds.length < 2) return;
-    const selectedSet = new Set(selectedIds);
-    const orderedSelectedNodes = orderedFlowNodes.filter((node) => selectedSet.has(node.id));
-    const selectedNodes = orderedSelectedNodes.length > 0 ? orderedSelectedNodes : nodes.filter((node) => selectedSet.has(node.id));
-    const internalEdges = edges.filter((edge) => selectedSet.has(edge.source) && selectedSet.has(edge.target));
-    const incomingIds = new Set(internalEdges.map((edge) => edge.target));
-    const outgoingIds = new Set(internalEdges.map((edge) => edge.source));
-    const startNode = selectedNodes.find((node) => !incomingIds.has(node.id)) || selectedNodes[0];
-    const endNode =
-      [...selectedNodes].reverse().find((node) => !outgoingIds.has(node.id)) || selectedNodes[selectedNodes.length - 1];
-    const exitEdge =
-      edges.find((edge) => edge.source === endNode.id && !selectedSet.has(edge.target)) ||
-      edges.find((edge) => selectedSet.has(edge.source) && !selectedSet.has(edge.target));
-    createLoopRegion({
-      name: `반복 영역 ${loopRegions.length + 1}`,
-      nodeIds: selectedIds,
-      startNodeId: startNode.id,
-      endNodeId: endNode.id,
-      exitNodeId: exitEdge?.target || LOOP_EXIT_FINISH,
-      exitConditionNodeId: endNode.id,
-      repeatCount: 3,
-      exitCondition: "result.done == true"
+    const seed = buildLoopRegionFromBand({
+      bandSelectedNodeIds,
+      nodes,
+      edges,
+      orderedFlowNodes,
+      existingRegionCount: loopRegions.length
     });
-    setSelectedNodeId(startNode.id);
+    if (!seed) return;
+    createLoopRegion(seed.region);
+    setSelectedNodeId(seed.startNodeId);
     setBandSelectedNodeIds([]);
     setLoopBandMode(false);
     setFlowModalTab("routes");
@@ -480,14 +451,7 @@ export function useStudioCanvasState() {
       conditionTargetNodes.find((node) => node.id !== activeConditionNode?.id)?.id || LOOP_EXIT_FINISH;
     setConditionBranches([
       ...conditionBranches,
-      {
-        id: `branch-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
-        label: `분기 ${conditionBranches.length + 1}`,
-        expression: conditionBranches.length === 0 ? "result.ok == true" : "else",
-        action: nextTarget === LOOP_EXIT_FINISH ? "end" : "node",
-        targetNodeId: nextTarget === LOOP_EXIT_FINISH ? "" : nextTarget,
-        notifyMessage: ""
-      }
+      createDefaultConditionBranch({ branchCount: conditionBranches.length, nextTargetId: nextTarget })
     ]);
   }, [activeConditionNode?.id, conditionBranches, conditionTargetNodes, setConditionBranches]);
 
@@ -530,19 +494,16 @@ export function useStudioCanvasState() {
   const handleSaveDraft = () => {
     if (typeof window === "undefined") return;
     const savedAt = new Date().toISOString();
-    const draft: StudioDraft = {
-      version: 1,
+    const draft = buildStudioDraftPayload({
       savedAt,
       missionGoal,
       missionBudget,
       useMockRuntime,
-      viewMode: "execution",
       nodes,
       edges,
       nodeExecutionStates,
-      loopRegions,
-      workflowGraph: buildWorkflowGraphPayload(nodes, edges, loopRegions)
-    };
+      loopRegions
+    });
     try {
       window.localStorage.setItem(STUDIO_DRAFT_STORAGE_KEY, JSON.stringify(draft));
       setDraftSavedAt(savedAt);
