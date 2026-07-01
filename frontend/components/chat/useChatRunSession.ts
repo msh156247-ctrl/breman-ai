@@ -1,13 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  approveMissionGate,
   fetchMissionArtifacts,
   fetchMissionDetail,
   fetchMissionEvaluations,
   fetchMissionTimeline,
   fetchPendingApprovals,
-  retryApprovalNotifications,
   type MissionArtifactsResponse,
   type MissionDetail,
   type MissionTimelineEvent,
@@ -24,12 +21,10 @@ import {
   eventToChatRow,
   mergeApiChatRows,
   missionStateLabels,
-  normalizeSideTab,
   roomStatusFromMissionState,
   type ChatRow,
   type RoomStatus,
-  type RuntimeDataMode,
-  type SideTab
+  type RuntimeDataMode
 } from "./chat-runtime-model";
 import {
   applyRuntimeNodeState,
@@ -37,11 +32,10 @@ import {
   runtimeEventChatRow,
   setHumanApprovalNodeState
 } from "./chat-runtime-events";
+import { useChatApprovalActions } from "./useChatApprovalActions";
+import { useChatUrlSelectionState } from "./useChatUrlSelectionState";
 
 export function useChatRunSession(runId: string) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
   const isDemoMission = runId.startsWith("demo-");
   const mockRunRecord = useMemo(() => MOCK_MISSION_RUNS.find((run) => run.id === runId) || null, [runId]);
   const [messages, setMessages] = useState<ChatRow[]>([]);
@@ -58,11 +52,14 @@ export function useChatRunSession(runId: string) {
   const [approvalSyncError, setApprovalSyncError] = useState("");
   const [approvalLastSyncedAt, setApprovalLastSyncedAt] = useState<Date | null>(null);
   const [runtimeRefreshNonce, setRuntimeRefreshNonce] = useState(0);
-  const [isApproving, setIsApproving] = useState(false);
-  const [isRetryingApprovalNotifications, setIsRetryingApprovalNotifications] = useState(false);
-  const [selectedMetricNode, setSelectedMetricNode] = useState<string | null>(searchParams.get("node"));
-  const [selectedArtifact, setSelectedArtifact] = useState<string | null>(searchParams.get("artifact"));
-  const [sideTab, setSideTab] = useState<SideTab>(() => normalizeSideTab(searchParams.get("tab")));
+  const {
+    selectedMetricNode,
+    setSelectedMetricNode,
+    selectedArtifact,
+    setSelectedArtifact,
+    sideTab,
+    setSideTab
+  } = useChatUrlSelectionState();
   const {
     missionRunState,
     clearMissionRunTransitionWarning,
@@ -92,6 +89,25 @@ export function useChatRunSession(runId: string) {
     store.setMissionRunState(nextState, source);
     missionStatusRef.current = useAppStore.getState().missionRunState;
   };
+
+  const {
+    isApproving,
+    isRetryingApprovalNotifications,
+    handleApprove,
+    handleRetryApprovalNotifications
+  } = useChatApprovalActions({
+    runId,
+    isDemoMission,
+    setMessages,
+    setStatus,
+    setRuntimeLoadError,
+    setMissionDetail,
+    setCurrentApproval,
+    setApprovalSyncError,
+    setApprovalLastSyncedAt,
+    setRuntimeRefreshNonce,
+    transitionRuntimeState
+  });
 
   useEffect(() => {
     clearMissionRunTransitionWarning();
@@ -448,83 +464,6 @@ export function useChatRunSession(runId: string) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages]);
-
-  useEffect(() => {
-    const q = new URLSearchParams(searchParams.toString());
-    if (selectedMetricNode) q.set("node", selectedMetricNode);
-    else q.delete("node");
-    if (selectedArtifact) q.set("artifact", selectedArtifact);
-    else q.delete("artifact");
-    if (sideTab) q.set("tab", sideTab);
-    router.replace(`${pathname}?${q.toString()}`, { scroll: false });
-  }, [pathname, router, searchParams, selectedArtifact, selectedMetricNode, sideTab]);
-
-  const handleApprove = async () => {
-    setIsApproving(true);
-    transitionRuntimeState("retrying", "runtime.human.approve");
-    try {
-      if (!isDemoMission) {
-        await approveMissionGate(runId);
-        setCurrentApproval(null);
-        setApprovalLastSyncedAt(new Date());
-        setMissionDetail((prev) => (prev ? { ...prev, status: "running" } : prev));
-        setRuntimeRefreshNonce((prev) => prev + 1);
-      }
-      setMessages((prev) =>
-        appendUniqueChatRows(prev, [
-          {
-            id: `approve-${runId}-${Date.now()}`,
-            type: "system",
-            content: "✅ 승인 완료. 다음 단계를 진행합니다.",
-            timestamp: new Date(),
-            source: "stream"
-          }
-        ])
-      );
-      setStatus("running");
-      transitionRuntimeState("running", "runtime.human.resume");
-      setRuntimeLoadError(null);
-    } catch (error) {
-      setRuntimeLoadError(error instanceof Error ? error.message : "failed_to_approve_mission");
-      transitionRuntimeState("escalated", "runtime.human.approve_failed");
-    } finally {
-      setIsApproving(false);
-    }
-  };
-
-  const handleRetryApprovalNotifications = async () => {
-    if (isDemoMission || isRetryingApprovalNotifications) return;
-    setIsRetryingApprovalNotifications(true);
-    setApprovalSyncError("");
-    try {
-      const response = await retryApprovalNotifications(runId);
-      const approvals = await fetchPendingApprovals();
-      setCurrentApproval(approvals.approvals.find((approval) => approval.mission_id === runId) || null);
-      setApprovalLastSyncedAt(new Date());
-      setRuntimeRefreshNonce((prev) => prev + 1);
-      setMessages((prev) =>
-        appendUniqueChatRows(prev, [
-          {
-            id: `approval-retry-${runId}-${Date.now()}`,
-            type: "system",
-            content: `📨 승인 알림 ${response.retried_count}건 재전송을 시도했습니다.`,
-            timestamp: new Date(),
-            source: "stream"
-          }
-        ])
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "failed_to_retry_approval_notifications";
-      setApprovalSyncError(
-        message.includes("409")
-          ? "재전송할 외부 승인 알림이 없습니다. 승인 큐를 다시 확인하세요."
-          : message
-      );
-    } finally {
-      setIsRetryingApprovalNotifications(false);
-    }
-  };
-
 
   return {
     isDemoMission,
