@@ -267,3 +267,15 @@ def test_auth_runtime_is_split_from_api_server() -> None:
     assert "async def resolve_jwt_identity_middleware" in auth_runtime_source
     assert "def _resolve_identity" in auth_runtime_source
     assert "def _resolve_identity" not in server_source
+
+
+def test_approval_transport_is_split_but_server_keeps_patchable_wrappers() -> None:
+    server_source = (ROOT_DIR / "api" / "server.py").read_text(encoding="utf-8")
+    transport_source = (ROOT_DIR / "api" / "approval_transport.py").read_text(encoding="utf-8")
+
+    assert "from api.approval_transport import" in server_source
+    assert "def post_json_webhook" in transport_source
+    assert "def send_smtp_approval_email" in transport_source
+    assert "def _post_json_webhook" in server_source
+    assert "def _send_smtp_approval_email" in server_source
+    assert "class NoRedirectHandler" not in server_source

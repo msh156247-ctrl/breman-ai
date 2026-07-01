@@ -3,18 +3,12 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from email.message import EmailMessage
-import ipaddress
 import json
 from pathlib import Path
 import os
-import socket
 import smtplib
-import ssl
 import time
 from urllib import error as urllib_error
-from urllib import request as urllib_request
-from urllib.parse import urlparse
 import uuid
 from typing import Any, Dict, List
 
@@ -38,6 +32,10 @@ from api.auth_runtime import (
     _require_roles,
     _resolve_identity,
     _resolve_ws_identity,
+)
+from api.approval_transport import (
+    post_json_webhook as _transport_post_json_webhook,
+    send_smtp_approval_email as _transport_send_smtp_approval_email,
 )
 from api.compat import legacy_api_metadata, mission_workflow_compatibility_fields
 from api.schemas import (
@@ -587,88 +585,31 @@ def _approval_notification_payload(notification: Dict[str, Any]) -> Dict[str, An
 
 
 def _post_json_webhook(url: str, payload: Dict[str, Any], token: str = "") -> Dict[str, Any]:
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
-        raise ValueError("webhook_url_invalid")
-    if not _is_truthy(os.getenv(APPROVAL_ALLOW_PRIVATE_WEBHOOKS_ENV)):
-        try:
-            addresses = {
-                item[4][0]
-                for item in socket.getaddrinfo(
-                    parsed.hostname,
-                    parsed.port or (443 if parsed.scheme == "https" else 80),
-                    type=socket.SOCK_STREAM,
-                )
-            }
-        except OSError as exc:
-            raise ValueError("webhook_host_unresolvable") from exc
-        for address in addresses:
-            ip = ipaddress.ip_address(address)
-            if (
-                ip.is_private
-                or ip.is_loopback
-                or ip.is_link_local
-                or ip.is_multicast
-                or ip.is_reserved
-                or ip.is_unspecified
-            ):
-                raise ValueError("webhook_private_address_blocked")
-
-    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    headers = {"Content-Type": "application/json; charset=utf-8"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    req = urllib_request.Request(url, data=data, headers=headers, method="POST")
-
-    class NoRedirectHandler(urllib_request.HTTPRedirectHandler):
-        def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
-            return None
-
-    opener = urllib_request.build_opener(NoRedirectHandler())
-    with opener.open(req, timeout=8) as response:
-        status_code = int(getattr(response, "status", 0) or response.getcode())
-        if status_code >= 400:
-            raise RuntimeError(f"webhook_http_{status_code}")
-        return {"status_code": status_code}
+    return _transport_post_json_webhook(
+        url,
+        payload,
+        token,
+        allow_private=_is_truthy(os.getenv(APPROVAL_ALLOW_PRIVATE_WEBHOOKS_ENV)),
+    )
 
 
 def _send_smtp_approval_email(notification: Dict[str, Any], payload: Dict[str, Any]) -> None:
-    target = str(notification.get("target") or "").strip()
     host = (os.getenv(SMTP_HOST_ENV) or "").strip()
-    if not target or "@" not in target:
-        raise ValueError("email_target_required")
-    if not host:
-        raise ValueError("smtp_not_configured")
     port = int(os.getenv(SMTP_PORT_ENV) or ("465" if _is_truthy(os.getenv(SMTP_USE_SSL_ENV)) else "587"))
     username = (os.getenv(SMTP_USER_ENV) or "").strip()
     password = os.getenv(SMTP_PASSWORD_ENV) or ""
     sender = (os.getenv(SMTP_FROM_ENV) or username or "bremen@localhost").strip()
-    message = EmailMessage()
-    message["Subject"] = f"[Bremen] 승인 요청 · {payload['mission_id']}"
-    message["From"] = sender
-    message["To"] = target
-    message.set_content(
-        "\n".join(
-            [
-                "Bremen 승인 요청이 도착했습니다.",
-                f"Mission: {payload['mission_id']}",
-                f"Task: {payload.get('task_id') or '-'}",
-                f"Gate: {payload.get('gate_stage') or 'before_run'}",
-                f"승인/옵스룸: {payload['ops_url']}",
-            ]
-        )
+    _transport_send_smtp_approval_email(
+        notification,
+        payload,
+        host=host,
+        port=port,
+        use_ssl=_is_truthy(os.getenv(SMTP_USE_SSL_ENV)),
+        username=username,
+        password=password,
+        sender=sender,
+        smtp_module=smtplib,
     )
-    if _is_truthy(os.getenv(SMTP_USE_SSL_ENV)):
-        with smtplib.SMTP_SSL(host, port, context=ssl.create_default_context(), timeout=8) as smtp:
-            if username:
-                smtp.login(username, password)
-            smtp.send_message(message)
-        return
-    with smtplib.SMTP(host, port, timeout=8) as smtp:
-        smtp.starttls(context=ssl.create_default_context())
-        if username:
-            smtp.login(username, password)
-        smtp.send_message(message)
 
 
 def _approval_webhook_for_channel(channel: str, mission_id: str = "") -> str:
