@@ -9,14 +9,11 @@ import {
   APPROVAL_CHANNEL_OPTIONS,
   CANVAS_UTILITY_NODES,
   describeExecuteError,
-  formatDraftTime,
   getNodeLabel,
   isConditionNode,
   LOOP_EXIT_FINISH,
   normalizeConditionBranches,
   orderFlowNodes,
-  readStudioDraft,
-  STUDIO_DRAFT_STORAGE_KEY,
   studioApprovalChannelState,
   type ApprovalSettingsLoadState,
   type ConditionBranch,
@@ -25,12 +22,12 @@ import {
 } from "./studio-canvas-model";
 import {
   buildLoopRegionFromBand,
-  buildStudioDraftPayload,
   createDefaultConditionBranch,
   getRunReadiness,
   getUnsupportedLiveProviders,
   resolveAutoAddPosition
 } from "./studio-state-builders";
+import { useStudioDraftActions } from "./useStudioDraftActions";
 
 export function useStudioCanvasState() {
   const router = useRouter();
@@ -41,8 +38,6 @@ export function useStudioCanvasState() {
   const [useMockRuntime, setUseMockRuntime] = useState(true);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executeError, setExecuteError] = useState("");
-  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
-  const [draftNotice, setDraftNotice] = useState("");
   const [approvalSettings, setApprovalSettings] = useState<ApprovalChannelSettings | null>(null);
   const [approvalEnvOverrides, setApprovalEnvOverrides] = useState<Record<string, boolean>>({});
   const [approvalSettingsState, setApprovalSettingsState] = useState<ApprovalSettingsLoadState>("idle");
@@ -242,15 +237,31 @@ export function useStudioCanvasState() {
       unsupportedLiveProviders
     });
   }, [budgetNumber, missionGoal, nodes.length, unsupportedLiveProviders, useMockRuntime]);
+  const {
+    draftSavedAt,
+    draftNotice,
+    handleSaveDraft,
+    handleRestoreDraft,
+    handleDiscardDraft,
+    handleClearCanvas
+  } = useStudioDraftActions({
+    missionGoal,
+    setMissionGoal,
+    missionBudget,
+    setMissionBudget,
+    useMockRuntime,
+    setUseMockRuntime,
+    nodes,
+    edges,
+    nodeExecutionStates,
+    loopRegions,
+    replaceCanvas,
+    clearCanvas
+  });
 
   useEffect(() => {
     setShowFlowModal(searchParams.get("panel") === "flow");
   }, [searchParams]);
-
-  useEffect(() => {
-    const draft = readStudioDraft();
-    if (draft) setDraftSavedAt(draft.savedAt);
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -490,66 +501,6 @@ export function useStudioCanvasState() {
     },
     [activeConditionNode, connectNodes]
   );
-
-  const handleSaveDraft = () => {
-    if (typeof window === "undefined") return;
-    const savedAt = new Date().toISOString();
-    const draft = buildStudioDraftPayload({
-      savedAt,
-      missionGoal,
-      missionBudget,
-      useMockRuntime,
-      nodes,
-      edges,
-      nodeExecutionStates,
-      loopRegions
-    });
-    try {
-      window.localStorage.setItem(STUDIO_DRAFT_STORAGE_KEY, JSON.stringify(draft));
-      setDraftSavedAt(savedAt);
-      setDraftNotice(`Draft 저장됨 · ${formatDraftTime(savedAt)}`);
-    } catch {
-      setDraftNotice("브라우저 저장소를 사용할 수 없어 draft를 저장하지 못했습니다.");
-    }
-  };
-
-  const handleRestoreDraft = () => {
-    const draft = readStudioDraft();
-    if (!draft) {
-      setDraftSavedAt(null);
-      setDraftNotice("복구할 draft가 없습니다.");
-      return;
-    }
-    replaceCanvas({
-      nodes: draft.nodes,
-      edges: draft.edges,
-      nodeExecutionStates: draft.nodeExecutionStates,
-      loopRegions: draft.loopRegions || []
-    });
-    setMissionGoal(draft.missionGoal);
-    setMissionBudget(draft.missionBudget);
-    setUseMockRuntime(draft.useMockRuntime);
-    setDraftSavedAt(draft.savedAt);
-    setDraftNotice(`Draft 복구됨 · ${formatDraftTime(draft.savedAt)}`);
-  };
-
-  const handleDiscardDraft = () => {
-    if (typeof window !== "undefined") {
-      try {
-        window.localStorage.removeItem(STUDIO_DRAFT_STORAGE_KEY);
-      } catch {
-        setDraftNotice("브라우저 저장소를 사용할 수 없어 draft를 삭제하지 못했습니다.");
-        return;
-      }
-    }
-    setDraftSavedAt(null);
-    setDraftNotice("저장된 draft를 삭제했습니다.");
-  };
-
-  const handleClearCanvas = () => {
-    clearCanvas();
-    setDraftNotice(draftSavedAt ? "워크플로우를 비웠습니다. 저장된 draft는 유지됩니다." : "");
-  };
 
   const handleExecute = async () => {
     if (nodes.length === 0) {
