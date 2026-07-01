@@ -87,3 +87,29 @@ Notes:
 
 - The E2E stack was stopped after the run and generated session files were deleted.
 - The responsive sweep now runs through `scripts/e2e-responsive-smoke.mjs`, which uses local Edge/Chrome CDP and does not require third-party browser test packages.
+
+## Local E2E Rerun After Key/Admin and Studio Builder Split
+
+Date: 2026-07-01
+
+Environment:
+
+- Frontend: `http://127.0.0.1:3103`
+- API: `http://127.0.0.1:8100`
+- Auth: JWT-only
+- Runtime: isolated temporary database and decision log
+- Branch: `staging/e2e-readiness`
+- Commit: `a74cf56`
+
+| Scenario | Result | Evidence |
+| --- | --- | --- |
+| API health and security | Pass | E2E stack accepted only JWT mode and reported healthy before tests ran |
+| Account A/B API smoke | Pass | Workspace isolation true |
+| Human Gate API smoke | Pass | Mission `7236737f` reached approval, resumed, and completed |
+| Timeline consistency | Pass | `human_gate_requested`, `human_gate_approved`, `mission_completed` observed |
+| Responsive UI smoke | Pass | Headless Edge checked `/studio`, `/runs`, `/market?tab=agents`, `/mypage?tab=approval`, `/guide` at `1280x720`, `663x912`, `627x699`; horizontal overflow 0, tiny target findings 0, browser error/warning logs 0 |
+
+Notes:
+
+- The E2E stack was stopped after the run and the generated session/stack files were deleted.
+- The temporary `runtime/e2e-local-20260701-100336` log directory was removed after verification.
