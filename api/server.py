@@ -59,6 +59,13 @@ from api.market_views import (
     matches_market_filters as _market_matches_filters,
     team_member_profiles as _market_team_member_profiles,
 )
+from api.mission_views import (
+    mission_artifacts_response,
+    mission_evaluations_response,
+    mission_response_snapshot as _view_mission_response_snapshot,
+    mission_timeline_response,
+    pending_approval_row as _view_pending_approval_row,
+)
 from api.schemas import (
     ApiKeyRegisterRequest,
     ApprovalChannelSettingsRequest,
@@ -450,17 +457,7 @@ def _get_mission_snapshot(mission_id: str) -> Dict[str, Any] | None:
 
 
 def _mission_response_snapshot(mission: Dict[str, Any]) -> Dict[str, Any]:
-    workflow_id = mission.get("workflow_id", mission.get("team_id"))
-    workflow_label = mission.get("workflow_label", mission.get("team_label"))
-    workflow_graph = mission.get("workflow_graph", mission.get("team_graph"))
-    return {
-        **mission,
-        **mission_workflow_compatibility_fields(
-            workflow_id=str(workflow_id) if workflow_id is not None else None,
-            workflow_label=str(workflow_label) if workflow_label is not None else None,
-            workflow_graph=workflow_graph if isinstance(workflow_graph, dict) else None,
-        ),
-    }
+    return _view_mission_response_snapshot(mission)
 
 
 def _approval_channel_settings_for_user(user_id: str | None) -> Dict[str, Any]:
@@ -1374,24 +1371,16 @@ def _pending_approval_row(
     channels = _normalize_approval_channels(pending.get("approval_channels"))
     task_id = str(pending.get("task_id") or "")
     gate_stage = str(pending.get("gate_stage") or "before_run")
-    is_runtime_active = bool(pending.get("runtime_active", runtime_active))
-    is_approvable = bool(pending.get("can_approve", can_approve)) and is_runtime_active
-    return {
-        "mission_id": mission_id,
-        "task_id": task_id,
-        "role": str(pending.get("role") or ""),
-        "gate_stage": gate_stage,
-        "approval_channels": channels,
-        "approval_target": str(pending.get("approval_target") or ""),
-        "requested_at": pending.get("requested_at") or time.time(),
-        "mission_goal": str(mission.get("goal") or ""),
-        "mission_status": str(mission.get("status") or ""),
-        "owner_id": _get_mission_owner_cached(mission_id),
-        "runtime_active": is_runtime_active,
-        "can_approve": is_approvable,
-        "recovery_reason": str(pending.get("recovery_reason") or ""),
-        "notifications": _approval_notifications_for_gate(mission_id, task_id, gate_stage),
-    }
+    return _view_pending_approval_row(
+        mission_id,
+        pending,
+        mission,
+        approval_channels=channels,
+        owner_id=_get_mission_owner_cached(mission_id),
+        notifications=_approval_notifications_for_gate(mission_id, task_id, gate_stage),
+        runtime_active=runtime_active,
+        can_approve=can_approve,
+    )
 
 
 @app.get("/api/approvals/pending")
@@ -1544,19 +1533,7 @@ async def get_mission_artifacts(
     if mission is None:
         raise HTTPException(status_code=404, detail="Mission not found")
     _require_mission_access(identity, mission_id)
-
-    tasks = mission.get("tasks", [])
-    artifacts = {
-        task.get("id"): task.get("artifacts", {})
-        for task in tasks
-        if task.get("status") == "completed" and task.get("artifacts")
-    }
-    return {
-        "mission_id": mission_id,
-        "artifacts": artifacts,
-        "total_tasks": len(tasks),
-        "completed_tasks": len(artifacts),
-    }
+    return mission_artifacts_response(mission_id, mission)
 
 
 @app.get("/api/missions/{mission_id}/timeline")
@@ -1570,7 +1547,7 @@ async def get_mission_timeline(
         raise HTTPException(status_code=404, detail="Mission not found")
     _require_mission_access(identity, mission_id)
     events = decision_log.list_by_mission(mission_id)
-    return {"mission_id": mission_id, "events": events, "count": len(events)}
+    return mission_timeline_response(mission_id, events)
 
 
 @app.get("/api/missions/{mission_id}/evaluations")
@@ -1583,10 +1560,11 @@ async def get_mission_evaluations(
     if _get_mission_snapshot(mission_id) is None:
         raise HTTPException(status_code=404, detail="Mission not found")
     _require_mission_access(identity, mission_id)
-    rows = evaluations.get(mission_id, [])
-    if not rows:
-        rows = [event for event in decision_log.list_by_mission(mission_id) if event.get("type") == "evaluation_result"]
-    return {"mission_id": mission_id, "evaluations": rows, "count": len(rows)}
+    return mission_evaluations_response(
+        mission_id,
+        evaluations.get(mission_id, []),
+        decision_log.list_by_mission(mission_id),
+    )
 
 
 @app.get("/api/capabilities")

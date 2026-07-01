@@ -16,6 +16,12 @@ from api.access_control import (
     resolve_team_member,
     visible_team_ids,
 )
+from api.mission_views import (
+    mission_artifacts_response,
+    mission_evaluations_response,
+    mission_response_snapshot,
+    pending_approval_row,
+)
 from api.security import validate_production_security
 from api.server import app
 from api.workflow_graph_views import build_workflow_graph_response, filter_workflow_graph_rows
@@ -402,3 +408,69 @@ def test_access_control_prefers_highest_duplicate_team_role() -> None:
     assert visible_team_ids(identity, [team], resolver) == {"team-a"}
     assert can_access_mission_owner(identity, "member-a") is True
     assert can_access_mission_owner(identity, "other-member") is False
+
+
+def test_mission_view_helpers_are_split_from_api_server() -> None:
+    server_source = (ROOT_DIR / "api" / "server.py").read_text(encoding="utf-8")
+    mission_source = (ROOT_DIR / "api" / "mission_views.py").read_text(encoding="utf-8")
+
+    assert "from api.mission_views import" in server_source
+    assert "def mission_response_snapshot" in mission_source
+    assert "def mission_artifacts_response" in mission_source
+    assert "def mission_timeline_response" in mission_source
+    assert "def mission_evaluations_response" in mission_source
+    assert "def pending_approval_row" in mission_source
+    assert 'workflow_id = mission.get("workflow_id"' not in server_source
+    assert 'task.get("artifacts"' not in server_source
+
+
+def test_mission_view_helpers_preserve_response_contracts() -> None:
+    mission = {
+        "id": "mission-a",
+        "goal": "Build",
+        "status": "awaiting_approval",
+        "workflow_id": "workflow-a",
+        "workflow_label": "Workflow A",
+        "workflow_graph": {"nodes": [], "edges": []},
+        "tasks": [
+            {"id": "task-a", "status": "completed", "artifacts": {"doc": "ok"}},
+            {"id": "task-b", "status": "running", "artifacts": {"draft": "skip"}},
+            {"id": "task-c", "status": "completed", "artifacts": {}},
+        ],
+    }
+
+    snapshot = mission_response_snapshot(mission)
+    assert snapshot["team_id"] == "workflow-a"
+    assert snapshot["team_label"] == "Workflow A"
+    assert snapshot["team_graph"] == {"nodes": [], "edges": []}
+
+    artifacts = mission_artifacts_response("mission-a", mission)
+    assert artifacts == {
+        "mission_id": "mission-a",
+        "artifacts": {"task-a": {"doc": "ok"}},
+        "total_tasks": 3,
+        "completed_tasks": 1,
+    }
+
+    evaluations = mission_evaluations_response(
+        "mission-a",
+        [],
+        [
+            {"type": "task_completed", "task_id": "task-a"},
+            {"type": "evaluation_result", "task_id": "task-a", "quality_pass": True},
+        ],
+    )
+    assert evaluations["count"] == 1
+    assert evaluations["evaluations"][0]["task_id"] == "task-a"
+
+    approval = pending_approval_row(
+        "mission-a",
+        {"task_id": "task-a", "role": "reviewer", "gate_stage": "before_run", "runtime_active": False},
+        mission,
+        approval_channels=["admin_queue"],
+        owner_id="owner-a",
+        notifications=[],
+    )
+    assert approval["mission_goal"] == "Build"
+    assert approval["can_approve"] is False
+    assert approval["owner_id"] == "owner-a"
