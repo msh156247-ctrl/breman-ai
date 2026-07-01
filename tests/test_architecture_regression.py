@@ -9,6 +9,13 @@ from fastapi.testclient import TestClient
 import pytest
 import yaml
 
+from api.access_control import (
+    can_access_mission_owner,
+    can_manage_team,
+    can_view_team,
+    resolve_team_member,
+    visible_team_ids,
+)
 from api.security import validate_production_security
 from api.server import app
 from api.workflow_graph_views import build_workflow_graph_response, filter_workflow_graph_rows
@@ -360,3 +367,38 @@ def test_workflow_graph_view_summarizes_rows_and_visibility() -> None:
     assert [team["id"] for team in visible_teams] == ["team-a"]
     assert visible_channels == []
     assert visible_ledger == [ledger[0]]
+
+
+def test_access_control_helpers_are_split_from_api_server() -> None:
+    server_source = (ROOT_DIR / "api" / "server.py").read_text(encoding="utf-8")
+    access_source = (ROOT_DIR / "api" / "access_control.py").read_text(encoding="utf-8")
+
+    assert "from api.access_control import" in server_source
+    assert "def resolve_team_member" in access_source
+    assert "def can_manage_team" in access_source
+    assert "def can_view_team" in access_source
+    assert "def visible_team_ids" in access_source
+    assert "def can_access_mission_owner" in access_source
+    assert "TEAM_ROLE_PRIORITY" not in server_source
+    assert '"team_manage_permission_required"' not in server_source
+
+
+def test_access_control_prefers_highest_duplicate_team_role() -> None:
+    team = {
+        "id": "team-a",
+        "created_by": "owner-a",
+        "members": [
+            {"member_id": "member-a", "role_type": "executor"},
+            {"member_id": "member-a", "role_type": "channel_supervisor"},
+            {"member_id": "member-a", "role_type": "supervisor"},
+        ],
+    }
+    identity = {"user_id": "member-a", "role": "member"}
+    resolver = lambda _team_id, member_id: resolve_team_member(team, member_id)
+
+    assert resolve_team_member(team, "member-a") == {"member_id": "member-a", "role_type": "channel_supervisor"}
+    assert can_manage_team(identity, team, resolver) is True
+    assert can_view_team(identity, team, resolver) is True
+    assert visible_team_ids(identity, [team], resolver) == {"team-a"}
+    assert can_access_mission_owner(identity, "member-a") is True
+    assert can_access_mission_owner(identity, "other-member") is False

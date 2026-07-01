@@ -19,6 +19,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 
+from api.access_control import (
+    ALLOWED_TEAM_ROLE_TYPES,
+    CHANNEL_PUBLISH_ALLOWED_ROLES,
+    can_access_mission_owner,
+    can_manage_team as _access_can_manage_team,
+    can_view_team as _access_can_view_team,
+    require_team_manage_permission as _access_require_team_manage_permission,
+    resolve_team_member as _access_resolve_team_member,
+    visible_team_ids as _access_visible_team_ids,
+)
 from api.auth_runtime import (
     ALLOWED_ROLES,
     auth_migration_stats,
@@ -230,9 +240,6 @@ memory_engine = MemoryScopeEngine()
 royalty_engine = RoyaltyEngine()
 evaluations: Dict[str, List[Dict[str, Any]]] = {}
 
-ALLOWED_TEAM_ROLE_TYPES = {"executor", "supervisor", "channel_supervisor"}
-CHANNEL_PUBLISH_ALLOWED_ROLES = {"supervisor", "channel_supervisor"}
-TEAM_ROLE_PRIORITY = {"executor": 0, "supervisor": 1, "channel_supervisor": 2}
 PROVIDER_ENV_MAP = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
@@ -328,19 +335,7 @@ async def resolve_jwt_identity(request: Request, call_next):
 
 
 def _resolve_team_member(team_id: str, member_id: str) -> Dict[str, Any] | None:
-    team = get_team_record(team_id)
-    if team is None:
-        return None
-    best_row: Dict[str, Any] | None = None
-    best_priority = -1
-    for row in team.get("members", []):
-        if not isinstance(row, dict) or row.get("member_id") != member_id:
-            continue
-        priority = TEAM_ROLE_PRIORITY.get(str(row.get("role_type", "")), -1)
-        if best_row is None or priority > best_priority:
-            best_row = row
-            best_priority = priority
-    return best_row
+    return _access_resolve_team_member(get_team_record(team_id), member_id)
 
 
 def _find_active_contract(source_team_id: str, target_team_id: str) -> Dict[str, Any] | None:
@@ -376,56 +371,28 @@ def _is_provider_key_registered(provider: str) -> bool:
 
 
 def _can_manage_team(identity: Dict[str, str], team: Dict[str, Any]) -> bool:
-    role = identity.get("role", "viewer")
-    if role in {"owner", "admin"}:
-        return True
-    user_id = identity.get("user_id", "")
-    if not user_id:
-        return False
-    if str(team.get("created_by", "")) == user_id:
-        return True
-    row = _resolve_team_member(str(team.get("id", "")), user_id)
-    if row is None:
-        return False
-    return str(row.get("role_type", "")) in {"supervisor", "channel_supervisor"}
+    return _access_can_manage_team(identity, team, _resolve_team_member)
 
 
 def _require_team_manage_permission(identity: Dict[str, str], team: Dict[str, Any]) -> None:
-    if not _can_manage_team(identity, team):
-        raise HTTPException(status_code=403, detail="team_manage_permission_required")
+    _access_require_team_manage_permission(identity, team, _resolve_team_member)
 
 
 def _can_view_team(identity: Dict[str, str], team: Dict[str, Any]) -> bool:
-    role = identity.get("role", "viewer")
-    if role in {"owner", "admin"}:
-        return True
-    user_id = identity.get("user_id", "")
-    if not user_id:
-        return False
-    if str(team.get("created_by", "")) == user_id:
-        return True
-    return _resolve_team_member(str(team.get("id", "")), user_id) is not None
+    return _access_can_view_team(identity, team, _resolve_team_member)
 
 
 def _visible_team_ids(identity: Dict[str, str]) -> set[str]:
     if identity.get("role") in {"owner", "admin"}:
         return {str(t.get("id", "")) for t in list_team_records()}
-    visible: set[str] = set()
-    for team in list_team_records():
-        team_id = str(team.get("id", ""))
-        if team_id and _can_view_team(identity, team):
-            visible.add(team_id)
-    return visible
+    return _access_visible_team_ids(identity, list_team_records(), _resolve_team_member)
 
 
 def _can_access_mission(identity: Dict[str, str], mission_id: str) -> bool:
-    role = identity.get("role", "viewer")
-    if role in {"owner", "admin"}:
-        return True
     owner_id = mission_owners.get(mission_id) or get_mission_owner(mission_id)
     if owner_id and mission_id not in mission_owners:
         mission_owners[mission_id] = owner_id
-    return bool(owner_id and owner_id == identity.get("user_id"))
+    return can_access_mission_owner(identity, owner_id)
 
 
 def _require_mission_access(identity: Dict[str, str], mission_id: str) -> None:
