@@ -77,6 +77,11 @@ from api.security import (
     validate_production_security,
 )
 from api.websocket_manager import ConnectionManager
+from api.workflow_graph_views import (
+    build_workflow_graph_response,
+    filter_workflow_graph_rows,
+    ledger_row_touches_team,
+)
 from api.workspace_settings import (
     _approval_channel_settings_response,
     _normalize_approval_channel_settings,
@@ -2448,14 +2453,7 @@ async def get_ledger(
     rows = list_ledger_records()
     if identity.get("role") not in {"owner", "admin"}:
         visible_ids = _visible_team_ids(identity)
-        rows = [
-            row
-            for row in rows
-            if str(row.get("source_team_id", "")) in visible_ids
-            or str(row.get("target_team_id", "")) in visible_ids
-            or str(row.get("receiver_team_id", "")) in visible_ids
-            or str(row.get("team_id", "")) in visible_ids
-        ]
+        rows = [row for row in rows if ledger_row_touches_team(row, visible_ids)]
     return {"rows": rows, "count": len(rows)}
 
 
@@ -2494,72 +2492,18 @@ async def get_team_graph(
     x_user_role: str | None = Header(default=None, alias="X-User-Role"),
 ) -> Dict[str, Any]:
     identity = _resolve_identity(x_user_id, x_user_role)
-    nodes: List[Dict[str, Any]] = []
     teams = list_team_records()
     channels = list_channel_records()
     ledger = list_ledger_records()
     if identity.get("role") not in {"owner", "admin"}:
         visible_ids = _visible_team_ids(identity)
-        teams = [team for team in teams if str(team.get("id", "")) in visible_ids]
-        channels = [
-            ch
-            for ch in channels
-            if str(ch.get("source_team_id", "")) in visible_ids and str(ch.get("target_team_id", "")) in visible_ids
-        ]
-        ledger = [
-            row
-            for row in ledger
-            if str(row.get("source_team_id", "")) in visible_ids
-            or str(row.get("target_team_id", "")) in visible_ids
-            or str(row.get("receiver_team_id", "")) in visible_ids
-            or str(row.get("team_id", "")) in visible_ids
-        ]
-    for team in teams:
-        team_id = str(team.get("id"))
-        member_count = len(team.get("members", []))
-        out_channels = [c for c in channels if c.get("source_team_id") == team_id]
-        in_channels = [c for c in channels if c.get("target_team_id") == team_id]
-        earned = sum(
-            float(row.get("royalty_cost", 0.0))
-            for row in ledger
-            if row.get("team_id") == team_id or row.get("source_team_id") == team_id
-        )
-        nodes.append(
-            {
-                "id": team_id,
-                "name": team.get("name"),
-                "domain": team.get("domain"),
-                "member_count": member_count,
-                "out_channels": len(out_channels),
-                "in_channels": len(in_channels),
-                "royalty_earned": round(earned, 6),
-            }
-        )
-
-    edges: List[Dict[str, Any]] = []
-    for channel in channels:
-        channel_id = str(channel.get("id"))
-        src = channel.get("source_team_id")
-        dst = channel.get("target_team_id")
-        msg_count = len(channel.get("messages", []))
-        edges.append(
-            {
-                "id": channel_id,
-                "source": src,
-                "target": dst,
-                "topic": channel.get("topic"),
-                "message_count": msg_count,
-                "contract_id": (_find_active_contract(src, dst) or {}).get("id"),
-            }
-        )
-    return {
-        "nodes": nodes,
-        "edges": edges,
-        "workflow_count": len(nodes),
-        "connection_count": len(edges),
-        "team_count": len(nodes),
-        "channel_count": len(edges),
-    }
+        teams, channels, ledger = filter_workflow_graph_rows(teams, channels, ledger, visible_ids)
+    return build_workflow_graph_response(
+        teams,
+        channels,
+        ledger,
+        find_active_contract=_find_active_contract,
+    )
 
 
 @app.get("/api/compatibility")

@@ -11,6 +11,7 @@ import yaml
 
 from api.security import validate_production_security
 from api.server import app
+from api.workflow_graph_views import build_workflow_graph_response, filter_workflow_graph_rows
 from core.decision_log import DecisionLog
 
 
@@ -305,3 +306,57 @@ def test_key_admin_helpers_are_split_from_api_server() -> None:
     assert "def _mask_key" not in server_source
     assert "def _require_admin" not in server_source
     assert "ch.isalnum() or ch in" not in server_source
+
+
+def test_workflow_graph_views_are_split_from_api_server() -> None:
+    server_source = (ROOT_DIR / "api" / "server.py").read_text(encoding="utf-8")
+    graph_source = (ROOT_DIR / "api" / "workflow_graph_views.py").read_text(encoding="utf-8")
+
+    assert "from api.workflow_graph_views import" in server_source
+    assert "def build_workflow_graph_response" in graph_source
+    assert "def filter_workflow_graph_rows" in graph_source
+    assert "def ledger_row_touches_team" in graph_source
+    assert '"royalty_earned": round' not in server_source
+    assert '"workflow_count": len(nodes)' not in server_source
+
+
+def test_workflow_graph_view_summarizes_rows_and_visibility() -> None:
+    teams = [
+        {"id": "team-a", "name": "Alpha", "domain": "dev", "members": [{"member_id": "a"}]},
+        {"id": "team-b", "name": "Beta", "domain": "qa", "members": []},
+    ]
+    channels = [
+        {
+            "id": "channel-ab",
+            "source_team_id": "team-a",
+            "target_team_id": "team-b",
+            "topic": "handoff",
+            "messages": [{"text": "ready"}],
+        }
+    ]
+    ledger = [
+        {"team_id": "team-a", "royalty_cost": 0.125},
+        {"source_team_id": "team-b", "royalty_cost": 0.25},
+    ]
+
+    response = build_workflow_graph_response(
+        teams,
+        channels,
+        ledger,
+        find_active_contract=lambda source, target: {"id": "contract-ab"} if source == "team-a" and target == "team-b" else None,
+    )
+    assert response["workflow_count"] == 2
+    assert response["connection_count"] == 1
+    assert response["nodes"][0]["member_count"] == 1
+    assert response["nodes"][0]["royalty_earned"] == 0.125
+    assert response["edges"][0]["contract_id"] == "contract-ab"
+
+    visible_teams, visible_channels, visible_ledger = filter_workflow_graph_rows(
+        teams,
+        channels,
+        ledger,
+        {"team-a"},
+    )
+    assert [team["id"] for team in visible_teams] == ["team-a"]
+    assert visible_channels == []
+    assert visible_ledger == [ledger[0]]
