@@ -8,15 +8,13 @@ import {
   approvalDeliveryToneClass,
   formatApprovalTime,
   sideTabLabels,
-  timelineIcon,
-  timelineKindLabel,
-  timelineToneClass,
   type ArtifactTraceRow,
   type CostRow,
   type NodeMetricRow,
   type SideTab,
   type TimelineRow
 } from "./chat-runtime-model";
+import { timelineIcon, timelineKindLabel, timelineToneClass } from "./chat-timeline-model";
 import {
   ChatRunArtifactsPanel,
   ChatRunCostPanel,

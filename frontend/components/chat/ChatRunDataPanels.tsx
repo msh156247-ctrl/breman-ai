@@ -2,11 +2,11 @@ import type { Dispatch, SetStateAction } from "react";
 import type { MissionTimelineEvent } from "../../lib/api";
 import type { ArtifactVersion } from "../../types";
 import {
-  eventMessage,
   type ArtifactTraceRow,
   type CostRow,
   type NodeMetricRow
 } from "./chat-runtime-model";
+import { eventMessage } from "./chat-timeline-model";
 
 export type ArtifactDiff = {
   from: string;

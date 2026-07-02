@@ -18,7 +18,6 @@ import type { MissionRunState } from "../../types";
 import {
   appendUniqueChatRows,
   eventDate,
-  eventToChatRow,
   mergeApiChatRows,
   missionStateLabels,
   roomStatusFromMissionState,
@@ -26,6 +25,7 @@ import {
   type RoomStatus,
   type RuntimeDataMode
 } from "./chat-runtime-model";
+import { eventToChatRow } from "./chat-timeline-model";
 import {
   applyRuntimeNodeState,
   resolveNodeIdForRuntimeEvent,

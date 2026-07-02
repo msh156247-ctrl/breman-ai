@@ -1,10 +1,10 @@
 import type { Node } from "reactflow";
 import type { NodeExecutionState } from "../../types";
 import {
-  eventChatType,
   eventDate,
   type ChatRow
 } from "./chat-runtime-model";
+import { eventChatType } from "./chat-timeline-model";
 
 type RuntimeNodeExecutionSetter = (nodeId: string, state: NodeExecutionState) => void;
 

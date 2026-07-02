@@ -3,9 +3,7 @@ import type { MissionArtifactsResponse, MissionDetail, MissionTimelineEvent, Pen
 import type { ArtifactVersion, MissionRunRecord, MissionRunState } from "../../types";
 import {
   approvalChannelLabel,
-  dedupeTimelineRows,
   eventDate,
-  eventToTimelineRow,
   missionStateLabels,
   retryableApprovalNotifications,
   runtimeModeLabels,
@@ -19,6 +17,7 @@ import {
   type SideTab,
   type TimelineRow
 } from "./chat-runtime-model";
+import { dedupeTimelineRows, eventToTimelineRow } from "./chat-timeline-model";
 
 type UseChatRunDerivedStateInput = {
   missionTimelineEvents: MissionTimelineEvent[];
