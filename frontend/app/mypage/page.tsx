@@ -6,20 +6,17 @@ import {
   AlertCircle,
   BellRing,
   CheckCircle,
-  LogOut,
   RefreshCw,
   Save,
-  ShieldCheck,
   Trash2
 } from "lucide-react";
 import { MOCK_KEY_STATUSES, MOCK_SETTLEMENTS } from "../../lib/mock-data";
 import {
   clearSessionToken,
   readSessionIdentity,
-  saveSessionIdentity,
-  SESSION_ROLES
+  saveSessionIdentity
 } from "../../lib/auth";
-import type { SessionIdentity, SessionRole } from "../../lib/auth";
+import type { SessionIdentity } from "../../lib/auth";
 import {
   deleteProviderKey,
   fetchApprovalChannelSettings,
@@ -42,6 +39,7 @@ import { useAppStore } from "../../stores/app.store";
 import type { APIProvider } from "../../types";
 import { MyPageBillingPanel } from "../../components/mypage/MyPageBillingPanel";
 import { MyPageOverviewPanel } from "../../components/mypage/MyPageOverviewPanel";
+import { MyPageSessionPanel, type MyPageSessionForm } from "../../components/mypage/MyPageSessionPanel";
 import { MyPageTabs, normalizeMyPageTab, type MyPageTab } from "../../components/mypage/MyPageTabs";
 
 const KEY_PROVIDERS = ["openai", "anthropic", "gemini", "stability", "google"] as const;
@@ -103,7 +101,7 @@ function MyPageInner() {
   const [sessionBusy, setSessionBusy] = useState(false);
   const [sessionNotice, setSessionNotice] = useState("");
   const [sessionError, setSessionError] = useState("");
-  const [sessionForm, setSessionForm] = useState(() => {
+  const [sessionForm, setSessionForm] = useState<MyPageSessionForm>(() => {
     const identity = readSessionIdentity();
     return {
       userId: identity.userId,
@@ -243,8 +241,6 @@ function MyPageInner() {
   }));
   const usage = useMemo(() => settlements.reduce((acc, row) => acc + Number(row.entries || 0), 0), [settlements]);
   const connectedKeys = keys.filter((k) => k.registered).length;
-  const sessionSource = serverIdentity?.source || (session.jwt ? "jwt" : "header");
-  const sessionExpiry = session.expiresAt ? new Date(session.expiresAt).toLocaleString("ko-KR") : "헤더 세션";
 
   const describeKeyError = (message: string) => {
     if (message.includes(":403")) {
@@ -367,7 +363,7 @@ function MyPageInner() {
 
   const saveHeaderSession = () => {
     try {
-      const next = saveSessionIdentity({ userId: sessionForm.userId, role: sessionForm.role as SessionRole });
+      const next = saveSessionIdentity({ userId: sessionForm.userId, role: sessionForm.role });
       setSession(next);
       setSessionNotice("헤더 기반 로컬 세션이 저장되었습니다.");
       setSessionError("");
@@ -394,7 +390,7 @@ function MyPageInner() {
     try {
       const issued = await issueSessionToken({
         userId: sessionForm.userId.trim(),
-        role: sessionForm.role as SessionRole,
+        role: sessionForm.role,
         ttlSeconds,
         adminToken: sessionForm.adminToken
       });
@@ -450,115 +446,18 @@ function MyPageInner() {
       ) : null}
 
       {activeTab === "session" && !jwtOnlyMode ? (
-        <div className="space-y-6">
-          <div className="rounded-2xl border border-white/10 bg-[#111111] p-6">
-            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <h2 className="font-bold text-white">현재 세션</h2>
-                <p className="mt-1 text-sm text-gray-400">API와 WebSocket 요청에 쓰이는 브라우저 로컬 세션입니다.</p>
-              </div>
-              <div className="rounded-full border border-white/10 px-3 py-1 text-xs font-bold uppercase text-cyan-200">
-                {sessionSource}
-              </div>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div className="rounded-xl bg-black/40 p-4">
-                <div className="text-xs text-gray-500">사용자</div>
-                <div className="mt-1 break-all text-sm font-bold text-white">{serverIdentity?.user_id || session.userId}</div>
-              </div>
-              <div className="rounded-xl bg-black/40 p-4">
-                <div className="text-xs text-gray-500">권한</div>
-                <div className="mt-1 text-sm font-bold text-emerald-300">{serverIdentity?.role || session.role}</div>
-              </div>
-              <div className="rounded-xl bg-black/40 p-4">
-                <div className="text-xs text-gray-500">만료</div>
-                <div className="mt-1 text-sm font-bold text-gray-100">{sessionExpiry}</div>
-              </div>
-            </div>
-            {sessionNotice ? (
-              <div className="mt-4 rounded border border-emerald-700/60 bg-emerald-900/20 p-3 text-sm text-emerald-200">
-                {sessionNotice}
-              </div>
-            ) : null}
-            {sessionError ? (
-              <div className="mt-4 rounded border border-red-700/60 bg-red-900/20 p-3 text-sm text-red-200">{sessionError}</div>
-            ) : null}
-          </div>
-
-          <div className="rounded-2xl bg-[#111111] p-6">
-            <h3 className="mb-4 font-bold text-white">세션 발급</h3>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <label className="text-sm font-semibold text-gray-300">
-                사용자 ID
-                <input
-                  value={sessionForm.userId}
-                  onChange={(event) => setSessionForm((prev) => ({ ...prev, userId: event.target.value }))}
-                  className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
-                  placeholder="local-owner"
-                />
-              </label>
-              <label className="text-sm font-semibold text-gray-300">
-                권한
-                <select
-                  value={sessionForm.role}
-                  onChange={(event) => setSessionForm((prev) => ({ ...prev, role: event.target.value as SessionRole }))}
-                  className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
-                >
-                  {SESSION_ROLES.map((role) => (
-                    <option key={role} value={role}>
-                      {role}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-sm font-semibold text-gray-300">
-                만료 초
-                <input
-                  value={sessionForm.ttlSeconds}
-                  onChange={(event) => setSessionForm((prev) => ({ ...prev, ttlSeconds: event.target.value }))}
-                  className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
-                  inputMode="numeric"
-                />
-              </label>
-              <label className="text-sm font-semibold text-gray-300">
-                관리자 토큰
-                <input
-                  value={sessionForm.adminToken}
-                  onChange={(event) => setSessionForm((prev) => ({ ...prev, adminToken: event.target.value }))}
-                  className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
-                  type="password"
-                  placeholder="BREMEN_ADMIN_TOKEN"
-                />
-              </label>
-            </div>
-            <div className="mt-5 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={issueJwtSession}
-                disabled={sessionBusy}
-                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <ShieldCheck className="h-4 w-4" />
-                {sessionBusy ? "발급 중" : "JWT 발급"}
-              </button>
-              <button
-                type="button"
-                onClick={saveHeaderSession}
-                className="inline-flex min-h-10 items-center justify-center rounded-xl border border-white/15 px-4 py-2 text-sm font-semibold hover:bg-white/5"
-              >
-                헤더 세션 저장
-              </button>
-              <button
-                type="button"
-                onClick={clearJwtSession}
-                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-white/15 px-4 py-2 text-sm font-semibold hover:bg-white/5"
-              >
-                <LogOut className="h-4 w-4" />
-                JWT 제거
-              </button>
-            </div>
-          </div>
-        </div>
+        <MyPageSessionPanel
+          session={session}
+          serverIdentity={serverIdentity}
+          sessionForm={sessionForm}
+          setSessionForm={setSessionForm}
+          sessionBusy={sessionBusy}
+          sessionNotice={sessionNotice}
+          sessionError={sessionError}
+          onIssueJwtSession={issueJwtSession}
+          onSaveHeaderSession={saveHeaderSession}
+          onClearJwtSession={clearJwtSession}
+        />
       ) : null}
 
       {activeTab === "keys" ? (
