@@ -1,6 +1,7 @@
 import { apiUrl } from "./runtime-config";
 import { buildAuthHeaders } from "./auth";
 import type { SessionRole } from "./auth";
+import { apiErrorMessage, asNumber, asRecord, asStringList, asText, fetchWithTimeout } from "./api-core";
 import type { Edge, Node } from "reactflow";
 import type {
   Agent,
@@ -17,25 +18,6 @@ import type { LoopRegion } from "../stores/app.store";
 type BackendMember = Record<string, unknown>;
 type BackendMission = Record<string, unknown>;
 type BackendTask = Record<string, unknown>;
-
-const API_REQUEST_TIMEOUT_MS = 15_000;
-
-async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort("api_request_timeout"), API_REQUEST_TIMEOUT_MS);
-  const externalSignal = init.signal;
-  const abortFromExternal = () => controller.abort(externalSignal?.reason);
-  if (externalSignal) {
-    if (externalSignal.aborted) abortFromExternal();
-    else externalSignal.addEventListener("abort", abortFromExternal, { once: true });
-  }
-  try {
-    return await fetch(input, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-    externalSignal?.removeEventListener("abort", abortFromExternal);
-  }
-}
 
 export type AuthWhoami = {
   user_id: string;
@@ -296,42 +278,6 @@ const CATEGORY_BY_DOMAIN: Record<string, Exclude<AgentCategory, "전체">> = {
   planning: "기획",
   general: "기획"
 };
-
-function asText(value: unknown, fallback = ""): string {
-  return typeof value === "string" && value.trim() ? value : fallback;
-}
-
-function asNumber(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-function asStringList(value: unknown, fallback: string[] = []): string[] {
-  return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : fallback;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-async function apiErrorMessage(res: Response, code: string): Promise<string> {
-  let detail = "";
-  try {
-    const body = asRecord(await res.clone().json());
-    const rawDetail = body.detail ?? body.error ?? body.message;
-    detail =
-      asText(rawDetail) ||
-      (rawDetail !== undefined
-        ? JSON.stringify(rawDetail)
-        : "");
-  } catch {
-    try {
-      detail = (await res.clone().text()).trim();
-    } catch {
-      detail = "";
-    }
-  }
-  return [code, String(res.status), detail].filter(Boolean).join(":");
-}
 
 function normalizeCategory(value: unknown): Exclude<AgentCategory, "전체"> {
   const raw = String(value || "general").trim();
