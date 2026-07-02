@@ -1,21 +1,16 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   BellRing,
   CheckCircle,
-  CreditCard,
-  Key,
-  LayoutDashboard,
   LogOut,
   RefreshCw,
   Save,
   ShieldCheck,
-  Trash2,
-  TrendingUp
+  Trash2
 } from "lucide-react";
 import { MOCK_KEY_STATUSES, MOCK_SETTLEMENTS } from "../../lib/mock-data";
 import {
@@ -45,21 +40,13 @@ import { isDemoModeEnabled } from "../../lib/demo-mode";
 import { isJwtOnlyClientMode } from "../../lib/runtime-config";
 import { useAppStore } from "../../stores/app.store";
 import type { APIProvider } from "../../types";
+import { MyPageBillingPanel } from "../../components/mypage/MyPageBillingPanel";
+import { MyPageOverviewPanel } from "../../components/mypage/MyPageOverviewPanel";
+import { MyPageTabs, normalizeMyPageTab, type MyPageTab } from "../../components/mypage/MyPageTabs";
 
-type MyTab = "overview" | "session" | "keys" | "approval" | "billing";
 const KEY_PROVIDERS = ["openai", "anthropic", "gemini", "stability", "google"] as const;
 type KeyProvider = (typeof KEY_PROVIDERS)[number];
 const APPROVAL_CHANNELS = ["admin_queue", "email", "sms", "kakao"] as const;
-
-function normalizeTabParam(value: string | null): MyTab {
-  return value === "keys" ||
-    value === "approval" ||
-    value === "billing" ||
-    value === "overview" ||
-    value === "session"
-    ? value
-    : "overview";
-}
 
 const KEY_PROVIDER_COPY: Record<KeyProvider, { description: string; placeholder: string }> = {
   openai: { description: "GPT-4o, GPT-4o-mini 실행", placeholder: "sk-..." },
@@ -97,7 +84,7 @@ function MyPageInner() {
   const hiredAgents = useAppStore((s) => s.hiredAgents);
   const canvasNodes = useAppStore((s) => s.nodes);
 
-  const [activeTab, setActiveTab] = useState<MyTab>(() => normalizeTabParam(tabParam));
+  const [activeTab, setActiveTab] = useState<MyPageTab>(() => normalizeMyPageTab(tabParam));
   const isDemoMode = isDemoModeEnabled();
   const jwtOnlyMode = isJwtOnlyClientMode();
   const [keys, setKeys] = useState<ProviderKeyStatus[]>(() => (isDemoMode ? MOCK_KEY_STATUSES : []));
@@ -140,7 +127,7 @@ function MyPageInner() {
   const [approvalError, setApprovalError] = useState("");
 
   useEffect(() => {
-    const nextTab = normalizeTabParam(tabParam);
+    const nextTab = normalizeMyPageTab(tabParam);
     if (jwtOnlyMode && nextTab === "session") {
       setActiveTab("overview");
       router.replace("/mypage?tab=overview", { scroll: false });
@@ -156,7 +143,7 @@ function MyPageInner() {
     router.replace(`/studio?${q.toString()}`, { scroll: false });
   }, [memberParam, router, tabParam]);
 
-  const goTab = (tab: MyTab) => {
+  const goTab = (tab: MyPageTab) => {
     setActiveTab(tab);
     const q = new URLSearchParams({ tab });
     router.replace(`/mypage?${q.toString()}`, { scroll: false });
@@ -451,108 +438,15 @@ function MyPageInner() {
       ) : null}
       {warn ? <div className="mb-4 rounded border border-yellow-700 bg-yellow-900/30 p-3 text-sm text-yellow-300">{warn}</div> : null}
 
-      <div className="mb-8 grid grid-cols-2 gap-1 rounded-2xl bg-[#111111] p-1 sm:flex sm:flex-wrap">
-        <button
-          type="button"
-          onClick={() => goTab("overview")}
-          className={`flex min-h-10 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold sm:justify-start sm:px-5 ${
-            activeTab === "overview" ? "bg-white/10 text-white" : "text-gray-500"
-          }`}
-        >
-          <LayoutDashboard className="h-4 w-4" />
-          개요
-        </button>
-        {!jwtOnlyMode ? (
-          <button
-            type="button"
-            onClick={() => goTab("session")}
-            className={`flex min-h-10 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold sm:justify-start sm:px-5 ${
-              activeTab === "session" ? "bg-white/10 text-white" : "text-gray-500"
-            }`}
-          >
-            <ShieldCheck className="h-4 w-4" />
-            세션
-          </button>
-        ) : null}
-        <button
-          type="button"
-          onClick={() => goTab("keys")}
-          className={`flex min-h-10 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold sm:justify-start sm:px-5 ${
-            activeTab === "keys" ? "bg-white/10 text-white" : "text-gray-500"
-          }`}
-        >
-          <Key className="h-4 w-4" />
-          API 키 관리
-        </button>
-        <button
-          type="button"
-          onClick={() => goTab("approval")}
-          className={`flex min-h-10 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold sm:justify-start sm:px-5 ${
-            activeTab === "approval" ? "bg-white/10 text-white" : "text-gray-500"
-          }`}
-        >
-          <BellRing className="h-4 w-4" />
-          승인 채널
-        </button>
-        <button
-          type="button"
-          onClick={() => goTab("billing")}
-          className={`col-span-2 flex min-h-10 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold sm:col-span-1 sm:justify-start sm:px-5 ${
-            activeTab === "billing" ? "bg-white/10 text-white" : "text-gray-500"
-          }`}
-        >
-          <CreditCard className="h-4 w-4" />
-          결제 · 크레딧
-        </button>
-      </div>
+      <MyPageTabs activeTab={activeTab} jwtOnlyMode={jwtOnlyMode} onChange={goTab} />
 
       {activeTab === "overview" ? (
-        <div className="space-y-6">
-          <div className="rounded-2xl border border-white/10 bg-[#111111] p-6">
-            <h2 className="mb-3 font-bold text-white">작업 요약</h2>
-            <p className="mb-4 text-sm text-gray-400">
-              외부에서 가져온 <strong className="text-gray-200">에이전트</strong>와 스튜디오의{" "}
-              <strong className="text-gray-200">실행 노드</strong>가 여기에 반영됩니다. 키가 연결된 provider만 실 런타임에서 안전하게
-              사용됩니다.
-            </p>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div className="rounded-xl bg-black/40 p-4">
-                <div className="text-xs text-gray-500">배치 에이전트</div>
-                <div className="text-2xl font-black text-cyan-300">{hiredAgents.length}</div>
-              </div>
-              <div className="rounded-xl bg-black/40 p-4">
-                <div className="text-xs text-gray-500">스튜디오 노드</div>
-                <div className="text-2xl font-black text-violet-300">{canvasNodes.length}</div>
-              </div>
-              <div className="rounded-xl bg-black/40 p-4">
-                <div className="text-xs text-gray-500">연결된 API 키</div>
-                <div className="text-2xl font-black text-emerald-300">
-                  {connectedKeys}/{KEY_PROVIDERS.length}
-                </div>
-              </div>
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Link
-                href="/market?tab=agents"
-                className="inline-flex min-h-10 items-center justify-center rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold hover:bg-blue-500"
-              >
-                에이전트 마켓 열기
-              </Link>
-              <Link
-                href="/studio"
-                className="inline-flex min-h-10 items-center justify-center rounded-xl border border-white/15 px-4 py-2 text-sm font-semibold hover:bg-white/5"
-              >
-                스튜디오
-              </Link>
-              <Link
-                href="/studio?panel=agents"
-                className="inline-flex min-h-10 items-center justify-center rounded-xl border border-white/15 px-4 py-2 text-sm font-semibold hover:bg-white/5"
-              >
-                에이전트 설정
-              </Link>
-            </div>
-          </div>
-        </div>
+        <MyPageOverviewPanel
+          hiredAgentCount={hiredAgents.length}
+          canvasNodeCount={canvasNodes.length}
+          connectedKeyCount={connectedKeys}
+          providerCount={KEY_PROVIDERS.length}
+        />
       ) : null}
 
       {activeTab === "session" && !jwtOnlyMode ? (
@@ -1007,75 +901,13 @@ function MyPageInner() {
       ) : null}
 
       {activeTab === "billing" ? (
-        <div className="space-y-6">
-          <div className="rounded-2xl border border-yellow-500/20 bg-yellow-500/5 p-6">
-            <h3 className="mb-2 flex items-center gap-2 font-bold text-yellow-200">
-              <TrendingUp className="h-4 w-4" />
-              크레딧 · 실행 비용
-              <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-gray-400">
-                {billingDataMode === "demo"
-                  ? "DEMO"
-                  : billingDataMode === "loading"
-                    ? "SYNCING"
-                    : billingDataMode === "live"
-                      ? "LIVE"
-                      : "UNAVAILABLE"}
-              </span>
-            </h3>
-            <p className="text-sm text-gray-400">
-              {isDemoMode
-                ? "플랫폼 크레딧과 실행 비용이 한 원장으로 수렴하는 예시입니다."
-                : "실제 provider 비용과 로열티 원장의 주간 집계입니다. 크레딧 충전 기능은 아직 연결되지 않았습니다."}
-            </p>
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-              <div className="rounded-xl bg-black/40 p-4">
-                <div className="text-xs text-gray-500">잔여 크레딧{isDemoMode ? " (샘플)" : ""}</div>
-                <div className="text-2xl font-black text-yellow-300">{isDemoMode ? "12,450" : "미연동"}</div>
-              </div>
-              <div className="rounded-xl bg-black/40 p-4">
-                <div className="text-xs text-gray-500">이번 달 누적 로열티</div>
-                <div className="text-2xl font-black text-green-400">${total.toFixed(2)}</div>
-              </div>
-              <div className="rounded-xl bg-black/40 p-4">
-                <div className="text-xs text-gray-500">
-                  누적 실행 횟수{isDemoMode ? " (샘플)" : ""}
-                </div>
-                <div className="text-2xl font-black text-white">{usage.toLocaleString()}</div>
-              </div>
-            </div>
-            <button
-              type="button"
-              disabled
-              className="mt-4 w-full cursor-not-allowed rounded-xl bg-white/5 py-3 text-sm font-bold text-gray-500 md:w-auto md:px-8"
-            >
-              크레딧 충전 (준비 중)
-            </button>
-          </div>
-
-          <div className="rounded-2xl bg-[#111111] p-6">
-            <h3 className="mb-4 font-bold">최근 실행 비용 내역</h3>
-            <div className="space-y-3">
-              {settlements.slice(0, 6).map((row, idx) => (
-                <div
-                  key={`${row.period}-${row.receiver_team_id || row.receiver_workflow_id || "unassigned"}-${idx}`}
-                  className="flex items-center justify-between rounded-xl bg-white/5 p-3"
-                >
-                  <div>
-                    <div className="font-semibold">
-                      실행 그룹 {row.receiver_team_id || row.receiver_workflow_id || idx + 1}
-                    </div>
-                    <div className="text-xs text-gray-500">{row.period}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-bold text-green-400">${Number(row.royalty_cost || 0).toFixed(4)}</div>
-                    <div className="text-xs text-gray-500">{row.entries}회</div>
-                  </div>
-                </div>
-              ))}
-              {settlements.length === 0 ? <div className="text-sm text-gray-500">정산 데이터가 없습니다.</div> : null}
-            </div>
-          </div>
-        </div>
+        <MyPageBillingPanel
+          billingDataMode={billingDataMode}
+          isDemoMode={isDemoMode}
+          settlements={settlements}
+          totalRoyalty={total}
+          usageCount={usage}
+        />
       ) : null}
     </div>
   );
