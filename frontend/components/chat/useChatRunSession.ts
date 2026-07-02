@@ -1,10 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  fetchMissionArtifacts,
-  fetchMissionDetail,
-  fetchMissionEvaluations,
-  fetchMissionTimeline,
-  fetchPendingApprovals,
   type MissionArtifactsResponse,
   type MissionDetail,
   type MissionTimelineEvent,
@@ -32,7 +27,9 @@ import {
   runtimeEventChatRow,
   setHumanApprovalNodeState
 } from "./chat-runtime-events";
+import { fetchCurrentPendingApproval, fetchRuntimeSnapshot } from "./chat-runtime-api";
 import { useChatApprovalActions } from "./useChatApprovalActions";
+import { useChatApprovalPolling } from "./useChatApprovalPolling";
 import { useChatUrlSelectionState } from "./useChatUrlSelectionState";
 
 export function useChatRunSession(runId: string) {
@@ -72,7 +69,7 @@ export function useChatRunSession(runId: string) {
   const liveRuntimeReadyRef = useRef(false);
   const missionStatusRef = useRef<MissionRunState>(mockRunRecord?.state || "queued");
 
-  const transitionRuntimeState = (nextState: MissionRunState, source: string) => {
+  const transitionRuntimeState = useCallback((nextState: MissionRunState, source: string) => {
     const store = useAppStore.getState();
     let currentState = store.missionRunState;
     if (currentState === nextState) return;
@@ -88,7 +85,7 @@ export function useChatRunSession(runId: string) {
     }
     store.setMissionRunState(nextState, source);
     missionStatusRef.current = useAppStore.getState().missionRunState;
-  };
+  }, []);
 
   const {
     isApproving,
@@ -134,49 +131,39 @@ export function useChatRunSession(runId: string) {
       setRuntimeDataMode((prev) => (prev === "live" ? "live" : "loading"));
       setRuntimeLoadError(null);
       let lastError: unknown = null;
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        try {
-          const [detail, timeline, artifacts, evaluations] = await Promise.all([
-            fetchMissionDetail(runId),
-            fetchMissionTimeline(runId),
-            fetchMissionArtifacts(runId),
-            fetchMissionEvaluations(runId)
-          ]);
-          if (!alive) return;
-          liveRuntimeReadyRef.current = true;
-          setMissionDetail(detail);
-          setMissionTimelineEvents(timeline.events);
-          setMissionArtifacts(artifacts);
-          setMissionEvaluations(evaluations.evaluations);
-          setStatus(roomStatusFromMissionState(detail.status));
-          missionStatusRef.current = detail.status;
-          resetMissionRunState(detail.status, "runtime.api.snapshot");
-          setRuntimeDataMode("live");
-          if (timeline.events.length > 0) {
-            const apiRows = timeline.events.map(eventToChatRow);
-            setMessages((prev) => mergeApiChatRows(prev, apiRows));
-          }
-          fetchPendingApprovals()
-            .then((approvals) => {
-              if (!alive) return;
-              setCurrentApproval(approvals.approvals.find((approval) => approval.mission_id === runId) || null);
-              setApprovalSyncError("");
-              setApprovalLastSyncedAt(new Date());
-            })
-            .catch((approvalError) => {
-              if (!alive) return;
-              setCurrentApproval(null);
-              setApprovalSyncError(
-                approvalError instanceof Error ? approvalError.message : "failed_to_sync_pending_approval"
-              );
-            });
-          return;
-        } catch (error) {
-          lastError = error;
-          if (attempt === 0) {
-            await new Promise((resolve) => window.setTimeout(resolve, 450));
-          }
+      try {
+        const snapshot = await fetchRuntimeSnapshot(runId);
+        if (!alive) return;
+        liveRuntimeReadyRef.current = true;
+        setMissionDetail(snapshot.detail);
+        setMissionTimelineEvents(snapshot.timelineEvents);
+        setMissionArtifacts(snapshot.artifacts);
+        setMissionEvaluations(snapshot.evaluations);
+        setStatus(roomStatusFromMissionState(snapshot.detail.status));
+        missionStatusRef.current = snapshot.detail.status;
+        resetMissionRunState(snapshot.detail.status, "runtime.api.snapshot");
+        setRuntimeDataMode("live");
+        if (snapshot.timelineEvents.length > 0) {
+          const apiRows = snapshot.timelineEvents.map(eventToChatRow);
+          setMessages((prev) => mergeApiChatRows(prev, apiRows));
         }
+        fetchCurrentPendingApproval(runId)
+          .then((approval) => {
+            if (!alive) return;
+            setCurrentApproval(approval);
+            setApprovalSyncError("");
+            setApprovalLastSyncedAt(new Date());
+          })
+          .catch((approvalError) => {
+            if (!alive) return;
+            setCurrentApproval(null);
+            setApprovalSyncError(
+              approvalError instanceof Error ? approvalError.message : "failed_to_sync_pending_approval"
+            );
+          });
+        return;
+      } catch (error) {
+        lastError = error;
       }
       if (!alive) return;
       liveRuntimeReadyRef.current = false;
@@ -205,41 +192,19 @@ export function useChatRunSession(runId: string) {
     };
   }, [isDemoMission, mockRunRecord, runId, resetMissionRunState, runtimeRefreshNonce]);
 
-  useEffect(() => {
-    if (isDemoMission) return;
-    const shouldPollApproval =
-      Boolean(currentApproval) ||
-      missionDetail?.status === "awaiting_approval" ||
-      missionRunState === "awaiting_approval";
-    if (!shouldPollApproval) return;
-    let cancelled = false;
-    const syncApproval = async () => {
-      try {
-        const approvals = await fetchPendingApprovals();
-        if (cancelled) return;
-        const nextApproval = approvals.approvals.find((approval) => approval.mission_id === runId) || null;
-        setCurrentApproval(nextApproval);
-        setApprovalSyncError("");
-        setApprovalLastSyncedAt(new Date());
-        if (!nextApproval && currentApproval) {
-          setStatus("running");
-          transitionRuntimeState("running", "runtime.approval.poll_resolved");
-          setRuntimeRefreshNonce((prev) => prev + 1);
-        }
-      } catch (approvalError) {
-        if (cancelled) return;
-        setApprovalSyncError(approvalError instanceof Error ? approvalError.message : "failed_to_sync_pending_approval");
-      }
-    };
-    void syncApproval();
-    const timer = window.setInterval(() => {
-      void syncApproval();
-    }, 5000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [currentApproval, isDemoMission, missionDetail?.status, missionRunState, runId, status]);
+  useChatApprovalPolling({
+    runId,
+    isDemoMission,
+    currentApproval,
+    missionDetail,
+    missionRunState,
+    setCurrentApproval,
+    setApprovalSyncError,
+    setApprovalLastSyncedAt,
+    setStatus,
+    setRuntimeRefreshNonce,
+    transitionRuntimeState
+  });
 
   useEffect(() => {
     let cancelled = false;
