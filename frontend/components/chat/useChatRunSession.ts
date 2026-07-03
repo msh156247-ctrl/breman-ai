@@ -22,12 +22,11 @@ import {
 } from "./chat-runtime-model";
 import { eventToChatRow } from "./chat-timeline-model";
 import {
-  applyRuntimeNodeState,
   resolveNodeIdForRuntimeEvent,
-  runtimeEventChatRow,
   setHumanApprovalNodeState
 } from "./chat-runtime-events";
 import { fetchCurrentPendingApproval, fetchRuntimeSnapshot } from "./chat-runtime-api";
+import { appendRuntimeWebSocketOpenRow, applyRuntimeWebSocketMessage } from "./chat-runtime-websocket";
 import { useChatApprovalActions } from "./useChatApprovalActions";
 import { useChatApprovalPolling } from "./useChatApprovalPolling";
 import { useChatUrlSelectionState } from "./useChatUrlSelectionState";
@@ -338,71 +337,23 @@ export function useChatRunSession(runId: string) {
       if (cancelled) return;
       hasLiveEvent = true;
       setRuntimeDataMode("live");
-      let data: any;
-      try {
-        data = JSON.parse(e.data || "{}");
-      } catch {
-        return;
-      }
-      const kind = String(data.type || "event");
-      const message = String(data.message || JSON.stringify(data));
-      if (kind === "human_gate_requested") {
-        setStatus("blocked");
-        transitionRuntimeState("awaiting_approval", "runtime.ws.human_gate_requested");
-      } else if (kind === "human_gate_approved") {
-        setStatus("running");
-        transitionRuntimeState("running", "runtime.ws.human_gate_approved");
-      } else if (kind === "mission_completed") {
-        setStatus("completed");
-        transitionRuntimeState("completed", "runtime.ws.mission_completed");
-      } else if (kind === "mission_failed") {
-        setStatus("blocked");
-        transitionRuntimeState("failed", "runtime.ws.mission_failed");
-      } else if (kind === "mission_cancelled") {
-        setStatus("blocked");
-        transitionRuntimeState("cancelled", "runtime.ws.mission_cancelled");
-      }
-      if (
-        kind === "mission_snapshot" ||
-        kind === "mission_completed" ||
-        kind === "mission_failed" ||
-        kind === "mission_cancelled" ||
-        kind === "task_completed" ||
-        kind === "task_failed" ||
-        kind === "execution_result" ||
-        kind === "evaluation_result"
-      ) {
-        setRuntimeRefreshNonce((prev) => prev + 1);
-      }
-      if (
-        kind === "human_gate_requested" ||
-        kind === "human_gate_approved" ||
-        kind.startsWith("approval_notification")
-      ) {
-        setRuntimeRefreshNonce((prev) => prev + 1);
-      }
-      if (kind.includes("retry")) transitionRuntimeState("retrying", "runtime.ws.retry");
-      applyRuntimeNodeState(nodes, setNodeExecutionState, kind, data, message);
-      setMessages((prev) =>
-        appendUniqueChatRows(prev, [runtimeEventChatRow(runId, kind, data, message)])
-      );
+      applyRuntimeWebSocketMessage({
+        runId,
+        rawMessage: e.data,
+        nodes,
+        setNodeExecutionState,
+        setMessages,
+        setStatus,
+        setRuntimeRefreshNonce,
+        transitionRuntimeState
+      });
     };
     ws.onopen = () => {
       if (cancelled) return;
       if (!["completed", "failed", "cancelled"].includes(missionStatusRef.current)) {
         transitionRuntimeState("running", "runtime.ws.open");
       }
-      setMessages((prev) =>
-        appendUniqueChatRows(prev, [
-          {
-            id: `sys-open-${runId}`,
-            type: "system",
-            content: "🚀 실행 워크플로우 런타임을 시작합니다!",
-            timestamp: new Date(),
-            source: "stream"
-          }
-        ])
-      );
+      appendRuntimeWebSocketOpenRow(runId, setMessages);
     };
     ws.onerror = async () => {
       // onclose에서 API snapshot 재시도 시간을 준 뒤 fallback 여부를 결정합니다.
@@ -424,7 +375,15 @@ export function useChatRunSession(runId: string) {
       timers.forEach((timer) => clearTimeout(timer));
       ws.close();
     };
-  }, [isDemoMission, mockRunRecord, nodes, runId, resetMissionRunState, setNodeExecutionState]);
+  }, [
+    isDemoMission,
+    mockRunRecord,
+    nodes,
+    runId,
+    resetMissionRunState,
+    setNodeExecutionState,
+    transitionRuntimeState
+  ]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
