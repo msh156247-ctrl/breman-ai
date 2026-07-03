@@ -1,31 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useAppStore, type LoopRegion } from "../../stores/app.store";
-import { createMission } from "../../lib/api";
+import { useSearchParams } from "next/navigation";
+import { useAppStore } from "../../stores/app.store";
 import { isDemoModeEnabled } from "../../lib/demo-mode";
-import { buildWorkflowGraphPayload } from "../../lib/workflow-graph";
 import {
   CANVAS_UTILITY_NODES,
-  describeExecuteError,
   isConditionNode,
-  LOOP_EXIT_FINISH,
-  type ConditionBranch,
   type FlowModalTab
 } from "./studio-canvas-model";
-import { buildLoopRegionFromBand, createDefaultConditionBranch, resolveAutoAddPosition } from "./studio-state-builders";
+import { resolveAutoAddPosition } from "./studio-state-builders";
 import { useStudioApprovalChannels } from "./useStudioApprovalChannels";
 import { useStudioCanvasDerivedState } from "./useStudioCanvasDerivedState";
+import { useStudioConditionActions } from "./useStudioConditionActions";
 import { useStudioDraftActions } from "./useStudioDraftActions";
+import { useStudioLoopActions } from "./useStudioLoopActions";
+import { useStudioMissionExecution } from "./useStudioMissionExecution";
 
 export function useStudioCanvasState() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const flowModalReturnScrollYRef = useRef(0);
   const [missionGoal, setMissionGoal] = useState("새로운 실행 워크플로우");
   const [missionBudget, setMissionBudget] = useState("5");
   const [useMockRuntime, setUseMockRuntime] = useState(true);
-  const [isExecuting, setIsExecuting] = useState(false);
-  const [executeError, setExecuteError] = useState("");
   const [showFlowModal, setShowFlowModal] = useState(() => searchParams.get("panel") === "flow");
   const [flowModalTab, setFlowModalTab] = useState<FlowModalTab>("steps");
   const [showAddPanel, setShowAddPanel] = useState(false);
@@ -255,154 +250,54 @@ export function useStudioCanvasState() {
     [selectedNodeData.condition_expression, updateSelectedNodeData]
   );
 
-  const toggleLoopBandNode = useCallback(
-    (nodeId: string) => {
-      setBandSelectedNodeIds((selectedIds) =>
-        selectedIds.includes(nodeId) ? selectedIds.filter((id) => id !== nodeId) : [...selectedIds, nodeId]
-      );
-      setSelectedNodeId(nodeId);
-    },
-    [setSelectedNodeId]
-  );
+  const {
+    toggleLoopBandNode,
+    createLoopRegionFromBand,
+    updateSelectedLoopRegion
+  } = useStudioLoopActions({
+    bandSelectedNodeIds,
+    nodes,
+    edges,
+    orderedFlowNodes,
+    loopRegions,
+    selectedLoopRegion,
+    createLoopRegion,
+    updateLoopRegion,
+    setSelectedNodeId,
+    setBandSelectedNodeIds,
+    setLoopBandMode,
+    setFlowModalTab
+  });
 
-  const createLoopRegionFromBand = useCallback(() => {
-    const seed = buildLoopRegionFromBand({
-      bandSelectedNodeIds,
-      nodes,
-      edges,
-      orderedFlowNodes,
-      existingRegionCount: loopRegions.length
-    });
-    if (!seed) return;
-    createLoopRegion(seed.region);
-    setSelectedNodeId(seed.startNodeId);
-    setBandSelectedNodeIds([]);
-    setLoopBandMode(false);
-    setFlowModalTab("routes");
-  }, [bandSelectedNodeIds, createLoopRegion, edges, loopRegions.length, nodes, orderedFlowNodes, setSelectedNodeId]);
+  const {
+    updateConditionNodeData,
+    addConditionNode,
+    addConditionBranch,
+    updateConditionBranch,
+    removeConditionBranch,
+    applyConditionBranchConnection
+  } = useStudioConditionActions({
+    activeConditionNode,
+    conditionBranches,
+    conditionTargetNodes,
+    appendUtilityToFlow,
+    updateNodeData,
+    connectNodes,
+    setFlowModalTab
+  });
 
-  const updateSelectedLoopRegion = useCallback(
-    (patch: Partial<Omit<LoopRegion, "id" | "createdAt">>) => {
-      if (!selectedLoopRegion) return;
-      updateLoopRegion(selectedLoopRegion.id, patch);
-    },
-    [selectedLoopRegion, updateLoopRegion]
-  );
-
-  const updateConditionNodeData = useCallback(
-    (patch: Record<string, unknown>) => {
-      if (!activeConditionNode) return;
-      updateNodeData(activeConditionNode.id, patch);
-    },
-    [activeConditionNode, updateNodeData]
-  );
-
-  const setConditionBranches = useCallback(
-    (branches: ConditionBranch[]) => {
-      updateConditionNodeData({ condition_branches: branches });
-    },
-    [updateConditionNodeData]
-  );
-
-  const addConditionNode = useCallback(() => {
-    const conditionUtility = CANVAS_UTILITY_NODES.find((item) => item.kind === "router");
-    if (!conditionUtility) return;
-    appendUtilityToFlow(conditionUtility);
-    setFlowModalTab("conditions");
-  }, [appendUtilityToFlow]);
-
-  const addConditionBranch = useCallback(() => {
-    const nextTarget =
-      conditionTargetNodes.find((node) => node.id !== activeConditionNode?.id)?.id || LOOP_EXIT_FINISH;
-    setConditionBranches([
-      ...conditionBranches,
-      createDefaultConditionBranch({ branchCount: conditionBranches.length, nextTargetId: nextTarget })
-    ]);
-  }, [activeConditionNode?.id, conditionBranches, conditionTargetNodes, setConditionBranches]);
-
-  const updateConditionBranch = useCallback(
-    (branchId: string, patch: Partial<ConditionBranch>) => {
-      setConditionBranches(
-        conditionBranches.map((branch) =>
-          branch.id === branchId
-            ? {
-                ...branch,
-                ...patch,
-                targetNodeId: patch.action && patch.action !== "node" ? "" : patch.targetNodeId ?? branch.targetNodeId
-              }
-            : branch
-        )
-      );
-    },
-    [conditionBranches, setConditionBranches]
-  );
-
-  const removeConditionBranch = useCallback(
-    (branchId: string) => {
-      setConditionBranches(conditionBranches.filter((branch) => branch.id !== branchId));
-    },
-    [conditionBranches, setConditionBranches]
-  );
-
-  const applyConditionBranchConnection = useCallback(
-    (branch: ConditionBranch) => {
-      if (!activeConditionNode || branch.action !== "node" || !branch.targetNodeId) return;
-      connectNodes(activeConditionNode.id, branch.targetNodeId, {
-        label: branch.label,
-        condition: branch.expression,
-        animated: true
-      });
-    },
-    [activeConditionNode, connectNodes]
-  );
-
-  const handleExecute = async () => {
-    if (nodes.length === 0) {
-      setExecuteError("먼저 에이전트를 워크플로우에 추가해주세요.");
-      return;
-    }
-    const goal = missionGoal.trim();
-    const budget = Number(missionBudget);
-    if (!goal) {
-      setExecuteError("미션 목표를 입력해 주세요.");
-      return;
-    }
-    if (!Number.isFinite(budget) || budget <= 0) {
-      setExecuteError("예산은 0보다 큰 숫자로 입력해 주세요.");
-      return;
-    }
-    if (isExecuting) return;
-    setIsExecuting(true);
-    setExecuteError("");
-    resetMissionRunState("planning", "studio.execute.start");
-    nodes.forEach((node, idx) => setNodeExecutionState(node.id, idx === 0 ? "running" : "idle"));
-    if (isDemoMode) {
-      setMissionRunState("running", "studio.execute.demo");
-      const fakeMissionId = `demo-${Date.now()}`;
-      router.push(`/chat/${fakeMissionId}`);
-      setIsExecuting(false);
-      return;
-    }
-
-    try {
-      setMissionRunState("running", "studio.execute.api");
-      const data = await createMission({
-        goal,
-        budget,
-        workflowLabel: goal,
-        workflowGraph: buildWorkflowGraphPayload(nodes, edges, loopRegions),
-        autoMode: true,
-        useMock: useMockRuntime
-      });
-      router.push(`/chat/${data.mission_id}`);
-    } catch (error) {
-      setMissionRunState("failed", "studio.execute.error");
-      const message = error instanceof Error ? error.message : "";
-      setExecuteError(describeExecuteError(message));
-    } finally {
-      setIsExecuting(false);
-    }
-  };
+  const { isExecuting, executeError, handleExecute } = useStudioMissionExecution({
+    missionGoal,
+    missionBudget,
+    useMockRuntime,
+    isDemoMode,
+    nodes,
+    edges,
+    loopRegions,
+    resetMissionRunState,
+    setMissionRunState,
+    setNodeExecutionState
+  });
 
   return {
     missionGoal,
