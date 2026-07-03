@@ -11,21 +11,19 @@ import { wsUrl } from "../../lib/runtime-config";
 import { useAppStore } from "../../stores/app.store";
 import type { MissionRunState } from "../../types";
 import {
-  appendUniqueChatRows,
-  eventDate,
   mergeApiChatRows,
-  missionStateLabels,
   roomStatusFromMissionState,
   type ChatRow,
   type RoomStatus,
   type RuntimeDataMode
 } from "./chat-runtime-model";
 import { eventToChatRow } from "./chat-timeline-model";
-import {
-  resolveNodeIdForRuntimeEvent,
-  setHumanApprovalNodeState
-} from "./chat-runtime-events";
 import { fetchCurrentPendingApproval, fetchRuntimeSnapshot } from "./chat-runtime-api";
+import {
+  appendMockRunSnapshotRow,
+  initializeDemoRuntime,
+  runChatFallbackSimulation
+} from "./chat-fallback-runtime";
 import { appendRuntimeWebSocketOpenRow, applyRuntimeWebSocketMessage } from "./chat-runtime-websocket";
 import { useChatApprovalActions } from "./useChatApprovalActions";
 import { useChatApprovalPolling } from "./useChatApprovalPolling";
@@ -171,17 +169,7 @@ export function useChatRunSession(runId: string) {
       if (mockRunRecord) {
         setStatus(roomStatusFromMissionState(mockRunRecord.state));
         resetMissionRunState(mockRunRecord.state, "runtime.mock.snapshot");
-        setMessages((prev) =>
-          appendUniqueChatRows(prev, [
-            {
-              id: `mock-snapshot-${mockRunRecord.id}`,
-              type: mockRunRecord.state === "awaiting_approval" ? "human_gate" : "system",
-              content: `${mockRunRecord.workflow_label}\n${missionStateLabels[mockRunRecord.state] || mockRunRecord.state} · ${mockRunRecord.goal}`,
-              timestamp: eventDate(mockRunRecord.started_at),
-              source: "simulation"
-            }
-          ])
-        );
+        appendMockRunSnapshotRow(setMessages, mockRunRecord, "mock-snapshot");
       }
     };
 
@@ -214,109 +202,31 @@ export function useChatRunSession(runId: string) {
         timers.push(timer);
       });
 
-    const runFallbackSimulation = async () => {
-      if (cancelled) return;
-      if (isDemoMission && mockRunRecord?.state === "awaiting_approval") {
-        setRuntimeDataMode("demo");
-        setStatus("blocked");
-        resetMissionRunState("awaiting_approval", "runtime.demo.approval_snapshot");
-        setMessages((prev) =>
-          appendUniqueChatRows(prev, [
-            {
-              id: `mock-approval-${mockRunRecord.id}`,
-              type: "human_gate",
-              content: `${mockRunRecord.workflow_label}\n승인 대기 · ${mockRunRecord.goal}`,
-              timestamp: eventDate(mockRunRecord.started_at),
-              source: "simulation"
-            }
-          ])
-        );
-        return;
-      }
-      if (!isDemoMission && mockRunRecord) {
-        setRuntimeDataMode("fallback");
-        setStatus(roomStatusFromMissionState(mockRunRecord.state));
-        resetMissionRunState(mockRunRecord.state, "runtime.mock.fallback");
-        setMessages((prev) =>
-          appendUniqueChatRows(prev, [
-            {
-              id: `mock-fallback-${mockRunRecord.id}`,
-              type: mockRunRecord.state === "awaiting_approval" ? "human_gate" : "system",
-              content: `${mockRunRecord.workflow_label}\n${missionStateLabels[mockRunRecord.state] || mockRunRecord.state} · ${mockRunRecord.goal}`,
-              timestamp: eventDate(mockRunRecord.started_at),
-              source: "simulation"
-            }
-          ])
-        );
-        return;
-      }
-      if (!isDemoMission) setRuntimeDataMode("fallback");
-      transitionRuntimeState("running", "runtime.fallback.start");
-      const events: Array<{ delay: number; row: ChatRow }> = [
-        {
-          delay: 800,
-          row: {
-            id: `sim-${runId}-1`,
-            type: "agent",
-            role: "developer",
-            content: "풀스택 코드 작성봇이 작업을 시작합니다...",
-            timestamp: new Date(),
-            source: "simulation"
-          }
-        },
-        {
-          delay: 1200,
-          row: {
-            id: `sim-${runId}-2`,
-            type: "agent",
-            role: "developer",
-            content: "FastAPI 백엔드 + Next.js 프론트엔드 초안 완성!",
-            timestamp: new Date(),
-            source: "simulation"
-          }
-        },
-        {
-          delay: 1200,
-          row: {
-            id: `sim-${runId}-3`,
-            type: "human_gate",
-            content: "코드 리뷰 단계 진행 전 최종 승인 필요",
-            timestamp: new Date(),
-            source: "simulation"
-          }
-        }
-      ];
-      for (const event of events) {
-        await delay(event.delay);
-        if (cancelled) return;
-        setMessages((prev) => appendUniqueChatRows(prev, [event.row]));
-        const mappedNodeId = resolveNodeIdForRuntimeEvent(nodes, undefined, event.row.role, event.row.content);
-        if (mappedNodeId && event.row.type === "agent") {
-          setNodeExecutionState(mappedNodeId, "running");
-        }
-        if (event.row.type === "human_gate") {
-          setStatus("blocked");
-          transitionRuntimeState("awaiting_approval", "runtime.fallback.human_gate");
-          setHumanApprovalNodeState(nodes, setNodeExecutionState, "waiting_input");
-        }
-      }
-    };
+    const runFallbackSimulation = () =>
+      runChatFallbackSimulation({
+        runId,
+        isDemoMission,
+        mockRunRecord,
+        nodes,
+        delay,
+        isCancelled: () => cancelled,
+        setMessages,
+        setRuntimeDataMode,
+        setStatus,
+        resetMissionRunState,
+        setNodeExecutionState,
+        transitionRuntimeState
+      });
 
     if (isDemoMission) {
-      const initialDemoState = mockRunRecord?.state || "planning";
-      resetMissionRunState(initialDemoState, "runtime.demo.init");
-      setStatus(roomStatusFromMissionState(initialDemoState));
-      setMessages((prev) =>
-        appendUniqueChatRows(prev, [
-          {
-            id: `sys-demo-${runId}`,
-            type: "system",
-            content: "DEMO 모드: 서버 연결 없이 로컬 예시 실행 로그를 보여줍니다.",
-            timestamp: new Date(),
-            source: "simulation"
-          }
-        ])
-      );
+      initializeDemoRuntime({
+        runId,
+        mockRunRecord,
+        setMessages,
+        setRuntimeDataMode,
+        setStatus,
+        resetMissionRunState
+      });
       void runFallbackSimulation();
       return () => {
         cancelled = true;
